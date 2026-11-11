@@ -63,6 +63,7 @@ UNITS = {
     'kat':  dict(voice='echo',   pitch=0.92, tempo=1.04, fx='engine', s=['Rocket battery here.', 'Racks are loaded.', 'Give me a grid.'], g=['Salvo coming up.', 'Moving the battery.', 'Rain on the way.']),
     'kol':  dict(voice='onyx',   pitch=0.82, tempo=0.90, fx='engine', s=['Colossus online.', 'The big gun is ready.', 'You called?'], g=['The ground will shake.', 'Moving. Slowly.', 'Out of my way.']),
     'heli': dict(voice='liam',   pitch=0.94, tempo=1.06, fx='chopper', s=['Gunship standing by.', 'Blades are spinning.', 'Ready to lift.'], g=['Lifting off.', 'Gunship inbound.', 'We own the sky.']),
+    'eng':  dict(voice='eric',   pitch=1.06, tempo=1.10, fx='field', s=['Engineer here.', 'Toolbox is packed.', 'Which building, sir?'], g=["I'll get us inside.", 'On my way in.', 'Consider it ours.']),
 }
 
 rng = np.random.default_rng(1944)

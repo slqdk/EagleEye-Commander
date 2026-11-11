@@ -103,6 +103,14 @@ class Kit {
     faces.push({ p: Tp, k: m === 4 ? 'top' : 'cap' });
     return this._part(faces, col, o);
   }
+  // barrel roof: half a tube lying on its flat side, from a to b (both at the height of the eaves); o.sq flattens it
+  arch(a, b, r, col, o = {}) {
+    const n = o.n || 8, ex = norm(sub(b, a)), ey = norm([-ex[1], ex[0], 0]), sq = o.sq ?? 1;
+    const ring = c => { const q = []; for (let i = 0; i <= n; i++) { const t = i * Math.PI / n; q.push([c[0] + ey[0] * Math.cos(t) * r, c[1] + ey[1] * Math.cos(t) * r, c[2] + Math.sin(t) * r * sq]); } return q; };
+    const A = ring(a), B = ring(b), faces = [{ p: A, k: 'cap' }, { p: B, k: 'cap' }];
+    for (let i = 0; i < n; i++) faces.push({ p: [A[i], A[i + 1], B[i + 1], B[i]], k: 'side' });
+    return this._part(faces, col, { smooth: true, ...o });
+  }
   ngon(cx, cy, r, n, rot = 0) { const q = []; for (let i = 0; i < n; i++) { const a = rot + i * Math.PI * 2 / n; q.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } return q; }
   cyl(cx, cy, r, z0, h, col, o = {}) {
     const n = o.n || 12, rot = Math.PI / n;
@@ -523,8 +531,9 @@ function wreck(sp, lvl, name) {
 }
 
 // ---------- palettes ----------
+const NOBODY = { main: '#b9b3a2', dark: '#7f7a6c', light: '#e4dfd0' };      // a neutral building that nobody holds yet
 function pal(f, ci) {
-  const t = DEFS.colors[ci] || DEFS.colors[0], mil = STYLE.palette === 'military';
+  const t = DEFS.colors[ci] || (ci < 0 ? NOBODY : DEFS.colors[0]), mil = STYLE.palette === 'military';
   const c = f === 'P'
     ? { wall: '#cfa57c', wall2: '#a97d5a', roof: '#6d4a3c', metal: '#8f887b', dark: '#3a302d', glass: '#ffd76a', conc: '#a79f90', crate: '#8a6a3c', crane: '#e0a82a', trim: '#5e4a3c', bunker: '#948a6c' }
     : { wall: '#e2e5d8', wall2: '#bcc3b2', roof: '#5f7389', metal: '#9dabb8', dark: '#3a444f', glass: '#8fd6f2', conc: '#b9bcae', crate: '#b8a06a', crane: '#f0c330', trim: '#66747f', bunker: '#98a087' };
@@ -545,7 +554,13 @@ function pal(f, ci) {
 
 // ---------- small things used on many models ----------
 const M = {};
-const pad = (k, c, w, h) => k.box(0, 0, 0, w - 0.12, h - 0.12, 0.07, c.conc, { ol: 0.8, bias: -5, sh: false });
+// The ground a building stands on. Every building has its own outline, so a base is not a row of squares.
+const slab = (k, c, pts, col = c.conc) => k.fr(pts, 0, pts, 0.07, col, { ol: 0.8, bias: -5, sh: false });
+// a rectangle w x h around (cx, cy) with its corners cut off by ch
+const oct = (w, h, ch, cx = 0, cy = 0) => { const x = w / 2, y = h / 2; return [[-x + ch, -y], [x - ch, -y], [x, -y + ch], [x, y - ch], [x - ch, y], [-x + ch, y], [-x, y - ch], [-x, -y + ch]].map(([a, b]) => [a + cx, b + cy]); };
+const shrink = (pts, f, cx, cy) => pts.map(([x, y]) => [cx + (x - cx) * f, cy + (y - cy) * f]);
+// walls on any outline with a lid in the team colour
+const block = (k, c, pts, z0, h, col, cx, cy, lid = c.T, grow = 1.03) => { k.fr(pts, z0, pts, z0 + h, col); const top = shrink(pts, grow, cx, cy); k.fr(top, z0 + h, top, z0 + h + 0.08, lid); };
 const win = (k, c, x, y, z, w = 0.2, h = 0.2) => {
   k.box(x, y, z, w, 0.03, h, c.glass, { ol: 0.45, glow: true, bias: 0.3 });
   if (k.hi) k.box(x, y + 0.012, z - 0.035, w + 0.07, 0.05, 0.03, c.trim, { ol: 0.3, bias: 0.35, sh: false });
@@ -578,14 +593,15 @@ const dish = (k, c, x, y, z, r = 0.13) => { k.cyl(x, y, 0.03, z, r * 0.7, c.meta
 // ---------- building models (origin = centre of the footprint) ----------
 M.hq = (k, c, f, frame = 0) => {
   const hi = k.hi, P = f === 'P';
-  pad(k, c, 3, 3);
-  k.box(-0.4, -0.45, 0.07, 1.9, 1.7, 0.9, c.wall);                         // main block
-  k.box(-0.4, -0.45, 0.97, 1.74, 1.54, 0.1, c.T);
+  slab(k, c, oct(2.88, 2.88, 0.6));
+  const main = [[-1.35, -0.8], [-0.85, -1.3], [0.05, -1.3], [0.55, -0.8], [0.55, 0.4], [-1.35, 0.4]];      // main block, its two back corners cut off
+  k.fr(main, 0.07, main, 0.97, c.wall);
+  { const lid = shrink(main, 0.92, -0.4, -0.45); k.fr(lid, 0.97, lid, 1.07, c.T); }
   k.box(-0.6, -0.6, 1.07, 0.8, 0.7, 0.2, c.wall2);                         // roof house with the radome
   k.dome(-0.6, -0.6, 0.2, 1.27, c.white, { sq: 0.8 });
   for (const x of [-1.15, -0.82]) win(k, c, x, 0.41, 0.4, 0.22, 0.24);
-  k.box(0.35, 0.82, 0.07, 1.5, 1.0, 0.52, c.wall2);                        // garage
-  k.box(0.35, 0.82, 0.59, 1.54, 1.04, 0.07, c.roof);
+  k.box(0.35, 0.82, 0.07, 1.5, 1.0, 0.4, c.wall2);                         // garage under a barrel roof
+  k.arch([0.35, 0.3, 0.47], [0.35, 1.34, 0.47], 0.77, c.roof, { sq: 0.42 });
   door(k, c, 0.35, 1.33, 0.09, 0.9, 0.36);
   sign(k, c, 0.35, 1.34, 0.45, 1.04, 0.08, c.gold, 'hazard');
   k.box(1.05, -0.95, 0.07, 0.34, 0.34, 0.22, c.dark);                      // crane
@@ -611,7 +627,7 @@ M.hq = (k, c, f, frame = 0) => {
   else for (const [r, z, col] of [[0.27, 1.07, c.white], [0.19, 1.076, c.Td], [0.08, 1.082, c.white]]) k.cyl(0.1, -0.8, r, z, 0.006, col, { ol: 0, n: 16, sh: false, mat: null });
   win(k, c, -0.25, 1.33, 0.28, 0.16, 0.16); win(k, c, 0.95, 1.33, 0.28, 0.16, 0.16);
   k.box(0.35, 1.36, 0.56, 0.14, 0.05, 0.04, c.lamp, { ol: 0.3, glow: true, bias: 0.5 });
-  vent(k, c, 0.9, 0.62, 0.66); k.box(0.1, 0.8, 0.66, 0.42, 0.3, 0.02, c.glass, { glow: true, ol: 0.4 });
+  vent(k, c, 0.9, 0.62, 0.66); k.box(0.35, 0.8, 0.79, 0.36, 0.3, 0.02, c.glass, { glow: true, ol: 0.4 });
   k.box(1.05, -0.82, 1.56, 0.2, 0.14, 0.2, c.wall, { ol: 0.6, mat: null }); k.box(1.05, -0.745, 1.62, 0.14, 0.02, 0.09, c.glass, { glow: true, ol: 0.3, bias: 0.3 });   // crane cab
   k.rod([1.05, -0.95, 1.95], [1.05, -0.95, 2.24], 0.05, 0.05, c.crane, { ol: 0.6, mat: null });
   k.rod([1.05, -0.95, 2.22], [1.05 + ca * 0.9, -0.95 + sa * 0.9, 1.97], 0.02, 0.02, c.dark, { ol: 0.3, sh: false });
@@ -622,7 +638,7 @@ M.hq = (k, c, f, frame = 0) => {
 
 M.pow = (k, c, f) => {
   const hi = k.hi, P = f === 'P';
-  pad(k, c, 2, 2);
+  slab(k, c, P ? k.ngon(0.05, 0.02, 1.0, 10, Math.PI / 10) : oct(1.88, 1.88, 0.5));
   if (P) {
     k.stack(0.28, -0.2, [[0.56, 0.07], [0.47, 0.36], [0.42, 0.62], [0.4, 0.9], [0.43, 1.08], [0.47, 1.2]], c.conc);     // cooling tower
     k.cyl(0.28, -0.2, 0.48, 1.2, 0.06, c.Td, { ol: 0.7 });
@@ -638,8 +654,8 @@ M.pow = (k, c, f) => {
       k.stack(0.78, 0.56, [[0.17, 0.07], [0.1, 0.19], [0.005, 0.24]], c.coal, { n: 7, smooth: false, ol: 0.7 });
     }
   } else {
-    k.box(-0.3, 0.2, 0.07, 1.1, 1.1, 0.6, c.wall);
-    k.box(-0.3, 0.2, 0.67, 1.14, 1.14, 0.08, c.T);
+    k.box(-0.3, 0.2, 0.07, 1.1, 1.1, 0.48, c.wall);                         // turbine hall under a barrel roof
+    k.arch([-0.87, 0.2, 0.55], [0.27, 0.2, 0.55], 0.57, c.T, { sq: 0.45 });
     for (const y of [-0.5, 0.2]) {
       k.cyl(0.6, y, 0.2, 0.07, 1.25, c.wall2, { r2: 0.15, mat: 'metal' });
       k.cyl(0.6, y, 0.17, 1.05, 0.12, c.T, { ol: 0, r2: 0.165, sh: false });
@@ -661,7 +677,8 @@ M.pow = (k, c, f) => {
 
 M.ref = (k, c, f, frame) => {
   const hi = k.hi;
-  pad(k, c, 3, 3);
+  for (const [x, y] of [[-0.95, -0.85], [-0.05, -0.95]]) k.cyl(x, y, 0.52, 0, 0.07, c.conc, { ol: 0.8, bias: -5, sh: false, n: 10 });
+  slab(k, c, oct(1.3, 1.7, 0.3, 0.86, -0.55)); slab(k, c, [[-0.8, 0.26], [0.8, 0.26], [1.02, 1.44], [-1.02, 1.44]]);
   for (const [x, y] of [[-0.95, -0.85], [-0.05, -0.95]]) { k.cyl(x, y, 0.4, 0.07, 0.9, c.metal); k.dome(x, y, 0.4, 0.97, c.T, { sq: 0.55 }); }
   k.box(0.9, -0.55, 0.07, 1.0, 1.4, 0.8, c.wall);
   k.box(0.9, -0.55, 0.87, 1.04, 1.44, 0.08, c.roof);
@@ -692,10 +709,10 @@ M.ref = (k, c, f, frame) => {
 
 M.bar = (k, c, f) => {
   const hi = k.hi;
-  pad(k, c, 2, 2);
+  slab(k, c, oct(1.9, 1.9, 0.55), c.sand);
   if (f === 'P') {
-    k.box(-0.2, -0.1, 0.07, 1.25, 1.2, 0.52, c.wall);
-    k.box(-0.2, -0.1, 0.59, 1.3, 1.25, 0.08, c.T);
+    k.box(-0.2, -0.1, 0.07, 1.25, 1.2, 0.4, c.wall);
+    k.arch([-0.2, -0.72, 0.47], [-0.2, 0.52, 0.47], 0.65, c.T, { sq: 0.55 });
     k.box(0.62, -0.45, 0.07, 0.46, 0.46, 1.0, c.wall2);                    // watch tower
     k.fr(k.ngon(0.62, -0.45, 0.4, 4, Math.PI / 4), 1.07, k.ngon(0.62, -0.45, 0.02, 4, Math.PI / 4), 1.4, c.T);
     win(k, c, 0.62, -0.21, 0.75, 0.2, 0.16);
@@ -728,7 +745,7 @@ M.bar = (k, c, f) => {
 
 M.fac = (k, c) => {
   const hi = k.hi;
-  pad(k, c, 3, 3);
+  slab(k, c, [[-1.44, -1.44], [1.44, -1.44], [1.44, 0.85], [0.9, 1.44], [-0.9, 1.44], [-1.44, 0.85]]);
   k.box(0, -0.25, 0.07, 2.6, 2.1, 0.95, c.wall);
   for (let i = 0; i < 3; i++) {     // saw-tooth roof: team-coloured slopes, lit glazing towards the south
     const y0 = -1.3 + i * 0.7, y1 = y0 + 0.7;
@@ -752,10 +769,9 @@ M.fac = (k, c) => {
 
 M.rad = (k, c, f, frame) => {
   const hi = k.hi;
-  pad(k, c, 2, 2);
-  k.box(0, 0.1, 0.07, 1.4, 1.2, 0.5, c.wall);
-  k.box(0, 0.1, 0.57, 1.44, 1.24, 0.08, c.T);
-  win(k, c, -0.4, 0.71, 0.22, 0.24, 0.18); win(k, c, 0.4, 0.71, 0.22, 0.24, 0.18);
+  slab(k, c, k.ngon(0, 0.06, 0.98, 12, Math.PI / 12));
+  block(k, c, oct(1.4, 1.2, 0.34, 0, 0.1), 0.07, 0.5, c.wall, 0, 0.1);
+  win(k, c, -0.24, 0.71, 0.22, 0.18, 0.18); win(k, c, 0.24, 0.71, 0.22, 0.18, 0.18);
   door(k, c, 0, 0.71, 0.09, 0.22, 0.3);
   k.cyl(0.25, -0.05, 0.16, 0.65, 0.5, c.metal, { n: 8 });
   // the turning aerial: three mesh panels in a shallow arc
@@ -777,16 +793,15 @@ M.rad = (k, c, f, frame) => {
 
 M.tech = (k, c, f) => {
   const hi = k.hi, P = f === 'P';
-  pad(k, c, 3, 2);
-  k.box(0, 0, 0.07, 2.6, 1.6, 0.6, c.wall);
-  k.box(0, 0, 0.67, 2.64, 1.64, 0.08, c.T);
+  slab(k, c, oct(2.88, 1.88, 0.5));
+  block(k, c, [[1.3, 0.8], [1.3, -0.8], [-0.5, -0.8], [-0.97, -0.6], [-1.27, -0.22], [-1.27, 0.22], [-0.97, 0.6], [-0.5, 0.8]], 0.07, 0.6, c.wall, 0, 0);      // the west end is round, under the dome
   k.cyl(-0.55, -0.1, 0.55, 0.75, 0.1, c.wall2, { mat: null });
   k.dome(-0.55, -0.1, 0.5, 0.85, c.glass, { glow: true });
   k.box(0.75, -0.15, 0.75, 0.8, 0.9, 0.35, c.wall2);
   k.box(0.75, 0.31, 0.83, 0.5, 0.03, 0.16, P ? c.fire : c.zap, { glow: true, ol: 0.45, bias: 0.3, mat: null });
   k.rod([1.05, -0.45, 1.1], [1.05, -0.45, 1.75], 0.05, 0.05, c.metal, { ol: 0.6, mat: null });
   k.rod([0.85, -0.45, 1.6], [1.25, -0.45, 1.6], 0.04, 0.04, c.metal, { ol: 0.5, mat: null });
-  for (const x of [-0.9, -0.45, 0.45, 0.9]) win(k, c, x, 0.81, 0.26, 0.24, 0.2);
+  for (const x of [-0.33, 0.45, 0.9]) win(k, c, x, 0.81, 0.26, 0.22, 0.2);
   door(k, c, 0, 0.81, 0.09, 0.3, 0.36);
   if (!hi) return;
   k.box(0.75, -0.15, 1.1, 0.84, 0.94, 0.04, c.Td, { ol: 0.5 });
@@ -857,11 +872,11 @@ M.coil = (k, c, f, frame) => {
 
 M.air = (k, c) => {
   const hi = k.hi;
-  k.box(0, 0, 0, 2.9, 1.9, 0.05, c.asph, { ol: 0.8, bias: -5, sh: false });
+  { const apron = oct(2.9, 1.9, 0.42); k.fr(apron, 0, apron, 0.05, c.asph, { ol: 0.8, bias: -5, sh: false }); }
   for (const [x, y] of [[-0.7, -0.38], [0.7, -0.38], [-0.7, 0.42], [0.7, 0.42]]) { k.cyl(x, y, 0.33, 0.05, 0.006, c.gold, { ol: 0, bias: -4, sh: false, n: 16 }); k.cyl(x, y, 0.26, 0.056, 0.006, c.asph, { ol: 0, bias: -3.9, sh: false, n: 16, mat: null }); }
-  k.box(0, -0.78, 0.05, 0.3, 0.26, 0.7, c.wall);                           // control tower
-  k.box(0, -0.78, 0.75, 0.44, 0.36, 0.2, c.glass, { glow: true });
-  k.box(0, -0.78, 0.95, 0.5, 0.42, 0.06, c.T);
+  k.cyl(0, -0.76, 0.17, 0.05, 0.7, c.wall, { n: 6, smooth: false });       // six-sided control tower
+  k.cyl(0, -0.76, 0.27, 0.75, 0.2, c.glass, { n: 6, glow: true, smooth: false, r2: 0.3 });
+  k.cyl(0, -0.76, 0.33, 0.95, 0.06, c.T, { n: 6, smooth: false });
   k.rod([0, -0.78, 1.01], [0, -0.78, 1.3], 0.03, 0.03, c.dark, { ol: 0.5 });
   k.rod([1.32, 0.82, 0.05], [1.32, 0.82, 0.6], 0.04, 0.04, c.dark, { ol: 0.5 });   // windsock
   k.tube([1.3, 0.82, 0.56], [1.02, 0.82, 0.5], 0.055, c.fire, { ol: 0.6, r2: 0.03, n: 6 });
@@ -1119,44 +1134,140 @@ M.heli = (k, c, f, frame) => {
   k.box(-0.02, 0, 0.46, 1.36, 0.07, 0.02, c.dark, { yaw: a + 1.5708, ol: 0.6, bias: 1, sh: false });
 };
 
+// ---------- neutral buildings (2x2): roof and flag take the owner's colour, pale canvas while nobody holds them ----------
+M.depot = (k, c) => {      // an open store under a pitched roof on posts, with crates and drums stacked around it
+  const hi = k.hi, slab = [[-0.92, -0.8], [0.62, -0.8], [0.62, 0.4], [-0.92, 0.4]];
+  k.fr(slab, 0, slab, 0.05, c.conc, { ol: 0.7, bias: -5, sh: false });
+  for (const [x, y] of [[-0.84, -0.72], [0.54, -0.72], [0.54, 0.32], [-0.84, 0.32]]) k.box(x, y, 0.05, 0.08, 0.08, 0.6, c.wood, { ol: 0.5 });
+  k.box(-0.46, -0.3, 0.05, 0.5, 0.5, 0.34, c.crate, { ol: 0.6 }); k.box(0.12, -0.36, 0.05, 0.42, 0.42, 0.3, c.crate, { ol: 0.6 });
+  k.box(-0.42, -0.3, 0.39, 0.32, 0.32, 0.2, c.crate, { ol: 0.6 });
+  drum(k, c, 0.32, 0.12, 0.05, c.red); drum(k, c, 0.1, 0.18, 0.05, c.metal);
+  k.fr([[-1.0, -0.88], [0.7, -0.88], [0.7, 0.48], [-1.0, 0.48]], 0.65, [[-1.0, -0.22], [0.7, -0.22], [0.7, -0.18], [-1.0, -0.18]], 1.02, c.T);
+  if (hi) k.box(-0.15, -0.2, 1.01, 1.76, 0.1, 0.035, c.Td, { ol: 0.4 });
+  k.box(0.86, 0.6, 0, 0.26, 0.26, 0.24, c.crate, { ol: 0.6 });
+  for (const x of [0.28, 0.6]) k.box(x, 0.8, 0, 0.3, 0.2, 0.15, c.sand, { ol: 0.7 });
+  flag(k, c, 0.88, -0.62, 0, 1.25);
+  if (hi) { k.box(-0.62, 0.7, 0, 0.4, 0.3, 0.2, c.crate, { ol: 0.6 }); k.box(-0.58, 0.7, 0.2, 0.26, 0.22, 0.16, c.crate, { ol: 0.6 }); drum(k, c, -0.2, 0.76, 0, c.metal); lamp(k, c, -0.95, 0.56, 0, 0.75); }
+};
+M.tower = (k, c) => {      // a lookout: four braced legs, a cabin with windows all round, a pointed roof
+  const hi = k.hi, base = k.ngon(0, 0.1, 0.66, 8, Math.PI / 8);
+  k.fr(base, 0, base, 0.05, c.conc, { ol: 0.7, bias: -5, sh: false });
+  for (const [x, y] of [[-0.4, -0.3], [0.4, -0.3], [0.4, 0.5], [-0.4, 0.5]]) k.rod([x, y, 0.05], [x * 0.7, 0.1 + (y - 0.1) * 0.7, 1.2], 0.075, 0.075, c.wood, { ol: 0.5 });
+  if (hi) {
+    k.rod([-0.38, 0.5, 0.15], [0.3, 0.42, 0.8], 0.04, 0.04, c.wood, { ol: 0.35 }); k.rod([0.38, 0.5, 0.15], [-0.3, 0.42, 0.8], 0.04, 0.04, c.wood, { ol: 0.35 });
+    ladder(k, c, 0, 0.52, 0.05, 1.2);
+  }
+  k.box(0, 0.1, 1.2, 0.82, 0.82, 0.06, c.wood, { ol: 0.6 });
+  k.box(0, 0.1, 1.26, 0.68, 0.68, 0.36, c.wall, { ol: 0.7 });
+  win(k, c, 0, 0.45, 1.36, 0.46, 0.17);
+  k.fr(k.ngon(0, 0.1, 0.66, 4, Math.PI / 4), 1.62, k.ngon(0, 0.1, 0.02, 4, Math.PI / 4), 2.02, c.T);
+  mast(k, c, 0, 0.1, 2.02, 0.3, c.red);
+  flag(k, c, 0.74, 0.74, 0, 0.95);
+  if (hi) { k.box(-0.66, 0.76, 0, 0.3, 0.2, 0.15, c.sand, { ol: 0.7 }); drum(k, c, 0.5, -0.4, 0, c.metal); }
+};
+M.shop = (k, c) => {       // a field workshop: an arched hall open to the south, a hoist beside it, tyres and tools in the yard
+  const hi = k.hi;
+  k.box(-0.18, -0.2, 0, 1.3, 1.2, 0.32, c.wall2, { ol: 0.7 });
+  k.arch([-0.18, -0.82, 0.32], [-0.18, 0.42, 0.32], 0.67, c.T, { n: 9, sq: 0.8 });
+  k.box(-0.18, 0.41, 0.02, 0.84, 0.03, 0.6, c.dark, { ol: 0.5, bias: 0.3, mat: 'door' });
+  sign(k, c, -0.18, 0.44, 0.64, 0.5, 0.1, c.gold, 'hazard');
+  k.box(0.76, -0.4, 0, 0.1, 0.1, 1.05, c.crane, { ol: 0.5 });
+  k.rod([0.76, -0.4, 1.05], [0.76, 0.5, 1.05], 0.08, 0.08, c.crane, { ol: 0.5 });
+  k.rod([0.76, 0.44, 1.05], [0.76, 0.44, 0.6], 0.025, 0.025, c.dark, { ol: 0.3 });
+  k.box(0.76, 0.44, 0.46, 0.15, 0.15, 0.14, c.metal, { ol: 0.5 });
+  flag(k, c, -0.9, 0.72, 0, 1.0);
+  for (const x of [0.28, 0.5]) k.tube([x, 0.8, 0.1], [x + 0.08, 0.8, 0.1], 0.1, c.tyre, { n: 8, ol: 0.6 });
+  if (hi) { drum(k, c, 0.88, 0.8, 0, c.red); k.box(-0.56, 0.74, 0, 0.3, 0.22, 0.18, c.crate, { ol: 0.6 }); vent(k, c, -0.18, -0.55, 0.84, 0.13); }
+};
+
 export const TURRET = { lt: 'lt_t', mt: 'mt_t', ht: 'ht_t', kol: 'kol_t', jeep: 'jeep_t', tur: 'tur_t', pill: 'pill_t', flt: 'flt_t', aag: 'aag_t', sam: 'sam_t' };
 export const FRAMES = { rad: 16, coil: 2, harv: 2, ref: 2, heli: 2, hq: 8 };
 
 // ---------- infantry: drawn directly in 2D ----------
 function drawInf(g, S, t, c, f, dir, frame) {
-  // dir: 0..7 clockwise from east. u = one "pixel" of the little soldier
-  const u = S / 40, a = dir * Math.PI / 4, dx = Math.cos(a), dy = Math.sin(a), back = dy < -0.3, side = dx < -0.01 ? -1 : 1;
-  const hi = STYLE.detail === 'high', mil = STYLE.palette === 'military', ow = STYLE.outline === 'thin' ? 1.0 : 1.5;
-  const skin = '#f2c9a0', helm = f === 'P' ? (mil ? '#6a563c' : '#7b5b3b') : (mil ? '#5e6b4d' : '#6f8259'), boot = '#2b2c33', leg = f === 'P' ? '#77633f' : '#5d6e4c', web = '#3f3b30';
+  // dir: 0..7 clockwise from east. u = one "pixel" of the soldier, who is about 20 u tall with his feet at the origin.
+  // The uniform is the faction's field cloth; the team colour sits on shoulders, sleeves and the helmet band.
+  // Every kind has its own outline: rifle, launcher on the shoulder, raised grenade, fuel tanks and mask, hard hat and toolbox.
+  const u = S / 36, a = dir * Math.PI / 4, dx = Math.cos(a), dy = Math.sin(a), back = dy < -0.3, side = dx < -0.01 ? -1 : 1;
+  const hi = STYLE.detail === 'high', mil = STYLE.palette === 'military', ow = STYLE.outline === 'thin' ? 0.9 : 1.3, P = f === 'P';
+  const cloth = P ? (mil ? '#75674a' : '#93804f') : (mil ? '#586541' : '#66804a'), gear = P ? (mil ? '#463c2b' : '#54462e') : (mil ? '#39432e' : '#42522f');
+  const helm = t === 'eng' ? (mil ? '#c9a63c' : '#f2c21c') : t === 'flm' ? '#3b3e44' : P ? (mil ? '#5f5239' : '#74603b') : (mil ? '#4b5939' : '#566c3f');
+  const skin = '#e0b48a', boot = '#25262b', steel = '#34373d', wood = '#7c5b39', olive = P ? '#5c5236' : '#4f5b3f';
   g.lineJoin = 'round'; g.lineCap = 'round';
   const blob = (x, y, w, h, col, r = 1.6) => { g.beginPath(); g.roundRect((x - w / 2) * u, (y - h / 2) * u, w * u, h * u, r * u); g.fillStyle = col; g.strokeStyle = OUT; g.lineWidth = ow * u; g.stroke(); g.fill(); };
   const line = (x0, y0, x1, y1, w, col) => { g.beginPath(); g.moveTo(x0 * u, y0 * u); g.lineTo(x1 * u, y1 * u); g.strokeStyle = OUT; g.lineWidth = (w + ow + 0.1) * u; g.stroke(); g.strokeStyle = col; g.lineWidth = w * u; g.stroke(); };
-  const step = frame === 1 ? 1.4 : frame === 2 ? -1.4 : 0;
-  if (hi) { blob(-2 + step * 0.4, -3.4, 2.9, 3.6, leg, 1); blob(2 - step * 0.4, -3.4 - Math.abs(step) * 0.2, 2.9, 3.6, leg, 1); }
-  blob(-2 + step * 0.5, hi ? -1.2 : -1.6, hi ? 3.3 : 3, hi ? 2.6 : 4.4, boot, 1); blob(2 - step * 0.5, (hi ? -1.2 : -1.6) - Math.abs(step) * 0.3, hi ? 3.3 : 3, hi ? 2.6 : 4.4, boot, 1);
-  if (t === 'flm' && !back) blob(-side * 2.4, -9, 3.6, 6.5, c.red, 1.6);
-  else if (hi && !back) blob(-side * 2.8, -8.8, 3, 5, web, 1.2);            // the pack shows behind the shoulder
-  blob(0, -8, 7.6, 8, c.T, 2.6);
-  if (hi) { g.fillStyle = 'rgba(255,255,255,0.2)'; g.beginPath(); g.roundRect(-3.1 * u, -11.3 * u, 2.4 * u, 4.6 * u, 1.1 * u); g.fill(); }
-  blob(0, -5.6, 7.6, 1.6, c.Td, 0.6);
-  if (hi && !back) { g.strokeStyle = web; g.lineWidth = 0.9 * u; g.beginPath(); g.moveTo(-side * 2.9 * u, -11.6 * u); g.lineTo(side * 2.2 * u, -6.5 * u); g.stroke(); }
-  // weapon
-  const hx = dx * 3, hy = -8.5 + dy * 2;
-  if (hi && t !== 'gren') line(-side * 3.1, -10.2, hx + dx * 1.2, hy + 0.9, 1.9, c.Td);    // the arm holding it
-  if (t === 'rkt') { line(-dx * 5, -12.5 - dy * 2.5, dx * 7, -12.5 + dy * 3.5, 2.6, '#566246'); line(dx * 6, -12.5 + dy * 3, dx * 7.5, -12.5 + dy * 3.8, 2.8, c.red); }
-  else if (t === 'gren') { line(hx, hy, hx + dx * 3 + 1, hy - 5, 1.8, skin); blob(hx + dx * 3 + 1, hy - 6.5, 3, 3.4, '#4d5a3c', 1.4); }
-  else if (t === 'flm') { line(hx - dx * 2, hy + 1, hx + dx * 6, hy + 1 + dy * 3, 2, '#4a4f58'); line(hx + dx * 6, hy + 1 + dy * 3, hx + dx * 7.4, hy + 1 + dy * 3.7, 2.4, c.fire); }
-  else { line(hx - dx * 3, hy + 0.5 - dy * 1.5, hx + dx * 6.5, hy + 0.5 + dy * 3.2, 1.7, '#3c3f47'); if (hi) line(hx - dx * 3, hy + 0.5 - dy * 1.5, hx - dx * 1, hy + 0.5 - dy * 0.5, 2.1, '#7a5a3a'); }
-  if (hi && t !== 'gren') blob(hx + dx * 1.2, hy + 0.9, 1.9, 1.9, skin, 0.9);
-  if (t === 'flm' && back) blob(0, -8.5, 4.6, 6.5, c.red, 1.6);
-  else if (hi && back) blob(0, -8.6, 4.6, 5.4, web, 1.4);
-  // head and helmet
-  blob(dx * 0.8, -14.4, 6.6, 6, skin, 3);
-  if (!back) { g.fillStyle = OUT; g.fillRect((dx * 2 - 1.4) * u, -15 * u, 1.1 * u, 1.5 * u); g.fillRect((dx * 2 + 1) * u, -15 * u, 1.1 * u, 1.5 * u); }
-  g.beginPath(); g.ellipse(dx * 0.6 * u, -16.2 * u, 4.1 * u, 3 * u, 0, Math.PI, 0); g.closePath(); g.fillStyle = helm; g.strokeStyle = OUT; g.lineWidth = ow * u; g.stroke(); g.fill();
-  if (hi) { g.fillStyle = 'rgba(255,255,255,0.25)'; g.beginPath(); g.ellipse((dx * 0.6 - 1.3) * u, -17.5 * u, 1.5 * u, 0.9 * u, -0.4, 0, 7); g.fill(); g.fillStyle = shade(helm, -0.25); g.fillRect((dx * 0.6 - 4.1) * u, -16.6 * u, 8.2 * u, 0.7 * u); }
-  if (f === 'P') { blob(-3.4 + dx * 0.6, -14.6, 1.8, 3, helm, 0.8); blob(3.4 + dx * 0.6, -14.6, 1.8, 3, helm, 0.8); }
-  else if (!hi) { g.fillStyle = shade(helm, 0.25); g.fillRect((dx * 0.6 - 2.4) * u, -18.2 * u, 2 * u, 1 * u); }
+  const dot = (x, y, r, col) => { g.beginPath(); g.arc(x * u, y * u, r * u, 0, 7); g.fillStyle = col; g.fill(); };
+  const step = frame === 1 ? 1.5 : frame === 2 ? -1.5 : 0, lift = Math.abs(step) * 0.25;
+  // boots and trousers
+  blob(-2.2 + step * 0.5, -1.3, 3.7, 2.6, boot, 1); blob(2.2 - step * 0.5, -1.3 - lift, 3.7, 2.6, boot, 1);
+  blob(-2.1 + step * 0.4, -4.7, 3.3, 5, cloth, 1.1); blob(2.1 - step * 0.4, -4.7 - lift, 3.3, 5, cloth, 1.1);
+  // what he carries on his back: seen beside the body from the front, on top of it from behind
+  const pack = () => {
+    const x = back ? 0 : -side * 3.8;
+    if (t === 'flm') { for (const q of back ? [-2, 2] : [-4.4, 4.4]) { blob(q, -11.2, 3.4, 7.8, c.red, 1.6); if (hi) blob(q, -14.6, 2.2, 1.3, steel, 0.5); } }
+    else if (t === 'rkt') { blob(x, -10.6, back ? 6.2 : 3.6, 6.4, gear, 1.3); for (const q of back ? [-1.6, 1.6] : [x]) { line(q, -13.6, q, -17.4, 1.5, olive); line(q, -17.6, q, -18.4, 1.5, c.red); } }      // spare rockets
+    else if (t === 'eng') { blob(x, -10.2, back ? 5.6 : 3.2, 5.4, gear, 1.2); if (hi) line(back ? 2.4 : x - side * 0.9, -8, back ? 2.4 : x - side * 0.9, -15, 1, '#9aa1a8'); }      // a pipe sticking up
+    else if (t === 'gren') blob(back ? -2.6 : x - side * 0.3, -8, 3.4, 4.2, gear, 1.1);      // grenade satchel on the hip
+    else { blob(x, -10.4, back ? 6.2 : 3.3, 5.8, gear, 1.3); if (hi) blob(x, -13.7, back ? 6.6 : 3.6, 1.8, cloth, 0.8); }      // pack with a rolled blanket
+  };
+  if (!back) pack();
+  // tunic in the team's colour, the faction's webbing over the chest
+  blob(0, -10.4, 9.2, 8.2, c.T, 2.4);
+  if (hi) { g.fillStyle = 'rgba(0,0,0,0.16)'; g.beginPath(); g.roundRect(-4.6 * u, -8.4 * u, 9.2 * u, 2.2 * u, 0.8 * u); g.fill(); }
+  if (t === 'eng') { blob(0, -9.5, 5.6, 6.2, cloth, 1.2); if (!back) for (const q of [-1, 1]) line(q * 1.9, -12.6, q * 2.4, -14.3, 1, cloth); }      // dungarees
+  else if (t === 'gren') { if (!back) { line(-side * 3.6, -13.6, side * 3.2, -7.4, 1.5, gear); if (hi) for (const k of [0.25, 0.5, 0.75]) dot(-side * 3.6 + side * 6.8 * k, -13.6 + 6.2 * k, 0.8, '#3d4a30'); } }      // bandolier
+  else if (!back) { blob(0, -10, 5.6, 6.6, gear, 1.4); if (hi) { blob(-1.5, -8.2, 2, 2, cloth, 0.5); blob(1.5, -8.2, 2, 2, cloth, 0.5); } }
+  blob(0, -6.4, 8.6, 1.5, t === 'eng' ? '#4a3a24' : boot, 0.5);
+  if (t === 'eng' && hi && !back) for (const x of [-2.6, 2.4]) line(x, -6.2, x, -4.4, 0.9, '#c9a63c');      // tools in the belt
+  if (back) pack();
+  // arms and what he holds
+  const hx = dx * 3.2, hy = -9 + dy * 1.6, sl = c.Td, arm = (x0, x1, y1) => { line(x0, -12.6, x1, y1, 1.9, sl); dot(x1, y1, 1.1, skin); };
+  if (t === 'rkt') {
+    const y = -14.4;
+    arm(side * 4, dx * 2.2, y + dy * 0.9 + 1.4);
+    line(-dx * 6.5, y - dy * 2.6, dx * 8, y + dy * 3.2, 3.2, olive); line(-dx * 6.5, y - dy * 2.6, -dx * 5, y - dy * 2, 4.2, olive);      // tube with a flared end
+    line(dx * 8.2, y + dy * 3.3, dx * 9.6, y + dy * 3.9, 2.3, c.red);
+    if (hi) line(dx * 1.5, y + dy * 0.6 - 1.9, dx * 3, y + dy * 1.2 - 1.9, 0.9, steel);
+  } else if (t === 'gren') {
+    arm(-side * 4, -side * 4.4, -7.6);
+    const ax = side * 5.4 + dx * 1.6, ay = -18;
+    line(side * 4.2, -12.8, ax, ay, 1.9, sl); dot(ax, ay, 1.1, skin);
+    line(ax, ay, ax + side * 0.9, ay - 3, 1, wood); blob(ax + side * 1.1, ay - 4, 2.5, 3, '#3d4a30', 1.1);      // stick grenade
+  } else if (t === 'flm') {
+    arm(-side * 4, hx - dx * 1.5, hy + 2.6); arm(side * 4, hx + dx * 2.6, hy + 3.2);
+    line(hx - dx * 3, hy + 2.6 - dy * 1.2, -side * (back ? 2 : 4.4), -8.6, 0.9, steel);      // hose to the tanks
+    line(hx - dx * 3, hy + 2.6 - dy * 1.2, hx + dx * 6.6, hy + 2.6 + dy * 3, 2.4, steel); line(hx + dx * 6.6, hy + 2.6 + dy * 3, hx + dx * 8, hy + 2.6 + dy * 3.6, 1.4, '#8a8f98');
+    dot(hx + dx * 8.9, hy + 2.6 + dy * 4, 1.5, c.fire); dot(hx + dx * 8.9, hy + 2.6 + dy * 4, 0.7, c.hot);      // pilot flame
+  } else if (t === 'eng') {
+    arm(-side * 4, -side * 5.2, -8.6); arm(side * 4, hx + dx * 1.6, hy + 2.6);
+    line(-side * 5.2, -8.6, -side * 6.2, -12.4, 1.1, '#9aa1a8'); dot(-side * 6.3, -12.9, 1, '#9aa1a8'); dot(-side * 6.3, -12.9, 0.45, OUT);      // spanner
+    blob(hx + dx * 1.6, hy + 5, 5.6, 3.6, mil ? '#8a3a30' : '#c8372c', 0.8); line(hx + dx * 1.6 - 1.5, hy + 3, hx + dx * 1.6 + 1.5, hy + 3, 0.9, steel);      // toolbox
+  } else {
+    arm(-side * 4, hx - dx * 1.2, hy + 1); arm(side * 4, hx + dx * 3.2, hy + 1.8);
+    const x0 = hx - dx * 4.6, y0 = hy + 0.8 - dy * 2.2, x1 = hx + dx * 8, y1 = hy + 0.8 + dy * 3.6;
+    line(x0 + (x1 - x0) * 0.3, y0 + (y1 - y0) * 0.3, x1, y1, 1.4, steel); line(x0, y0, x0 + (x1 - x0) * 0.36, y0 + (y1 - y0) * 0.36, 2.3, wood);      // rifle: barrel and stock
+    if (hi) line(x0 + (x1 - x0) * 0.5, y0 + (y1 - y0) * 0.5 + 0.6, x0 + (x1 - x0) * 0.5 - dx * 0.4, y0 + (y1 - y0) * 0.5 + 2.2, 1.1, steel);                // magazine
+  }
+  // head: the helmet sits low, so the face is a strip in its shadow
+  const px = dx * 0.6;
+  blob(px, -15.6, 5.4, 4.6, skin, 2.2);
+  if (!back) {
+    if (t === 'flm') { blob(px + dx * 0.4, -15.3, 5.2, 4, '#2c2f34', 1.6); dot(px + dx * 0.8 - 1.2, -15.8, 0.8, '#c9d2d4'); dot(px + dx * 0.8 + 1.2, -15.8, 0.8, '#c9d2d4'); dot(px + dx * 0.8, -13.9, 1, '#7d838a'); }      // mask
+    else { g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect((px - 2.5) * u, -17.2 * u, 5 * u, 1.5 * u); if (hi) { g.fillStyle = OUT; g.fillRect((px + dx * 1.2 - 1.5) * u, -15.9 * u, 1 * u, 0.9 * u); g.fillRect((px + dx * 1.2 + 0.5) * u, -15.9 * u, 1 * u, 0.9 * u); } }
+  }
+  if (t === 'gren') {      // a field cap with a peak
+    blob(px, -18.2, 6.2, 2.6, cloth, 1); if (!back) { line(px + dx * 1.6 - 1.6, -17, px + dx * 1.6 + 1.6, -17, 0.9, gear); dot(px + dx * 0.6, -18.3, 0.7, c.Tl); }
+  } else {
+    const hr = t === 'eng' ? 3.7 : 4.1;
+    g.beginPath(); g.ellipse(px * u, -17.2 * u, hr * u, 3.3 * u, 0, Math.PI, 0); g.closePath(); g.fillStyle = helm; g.strokeStyle = OUT; g.lineWidth = ow * u; g.stroke(); g.fill();
+    if (t === 'eng') { blob(px, -17.1, 9, 1.3, helm, 0.6); if (hi) line(px, -20.2, px, -18.2, 0.9, shade(helm, -0.2)); }      // hard hat: brim and ridge
+    else {
+      g.fillStyle = shade(helm, -0.22); g.fillRect((px - hr) * u, -17.9 * u, hr * 2 * u, 0.9 * u);      // rim
+      if (t !== 'flm') { g.fillStyle = c.T; g.fillRect((px - hr * 0.86) * u, -19.3 * u, hr * 1.72 * u, 0.8 * u); }      // the team's band
+      if (P && t !== 'flm') { blob(px - 3.7, -16, 1.7, 2.8, helm, 0.8); blob(px + 3.7, -16, 1.7, 2.8, helm, 0.8); }
+    }
+    if (hi) { g.fillStyle = 'rgba(255,255,255,0.22)'; g.beginPath(); g.ellipse((px - 1.4) * u, -19 * u, 1.5 * u, 0.8 * u, -0.4, 0, 7); g.fill(); }
+  }
 }
 
 // ---------- cache ----------
@@ -1171,13 +1282,13 @@ export function sprite(name, S, { dir = 0, color = 0, faction = 'A', frame = 0, 
   else {
     const c = pal(faction, color), mil = STYLE.palette === 'military';
     if (isInf(name)) {
-      const cv = mkCanvas(S * 0.9, S * 0.9), g = cv.getContext('2d');
-      g.translate(S * 0.45, S * 0.78); drawInf(g, S, name, c, faction, dir, frame);
-      s = { cv, ax: S * 0.45, ay: S * 0.78, S };
+      const cv = mkCanvas(S * 0.9, S * 0.96), g = cv.getContext('2d');
+      g.translate(S * 0.45, S * 0.84); drawInf(g, S, name, c, faction, dir, frame);
+      s = { cv, ax: S * 0.45, ay: S * 0.84, S };
     } else {
       const veh = name.endsWith('_t') || !!DEFS.units[name], k = new Kit(dir * Math.PI / 8, c, faction, veh);
       M[name](k, c, faction, frame);
-      s = renderParts(k.parts, S, !!DEFS.buildings[name], { veh, mil, seed: hashStr(name), wheel: mil ? '#7d7a68' : '#868d95' });     // only buildings cast a shaped shadow
+      s = renderParts(k.parts, S, !!(DEFS.buildings[name] || DEFS.neutral[name]), { veh, mil, seed: hashStr(name), wheel: mil ? '#7d7a68' : '#868d95' });     // only buildings cast a shaped shadow
     }
   }
   cache.set(key, s); cachePx += pxOf(s);
@@ -1190,7 +1301,7 @@ export const hasModel = n => !!M[n] || isInf(n);
 // Sidebar picture: the model on a little stage.
 export function cameo(type, faction, color, w = 128, h = 96) {
   const cv = mkCanvas(w, h), g = cv.getContext('2d');
-  const bd = DEFS.buildings[type], grad = g.createLinearGradient(0, 0, 0, h), mil = STYLE.palette === 'military';
+  const bd = DEFS.buildings[type] || DEFS.neutral[type], grad = g.createLinearGradient(0, 0, 0, h), mil = STYLE.palette === 'military';
   if (mil) { grad.addColorStop(0, '#48524f'); grad.addColorStop(0.62, '#8b8d78'); grad.addColorStop(0.63, '#7c7850'); grad.addColorStop(1, '#55533a'); }
   else { grad.addColorStop(0, '#39506a'); grad.addColorStop(0.62, '#5d7a93'); grad.addColorStop(0.63, '#6f8f52'); grad.addColorStop(1, '#4f6d3a'); }
   g.fillStyle = grad; g.fillRect(0, 0, w, h);

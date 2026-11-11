@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/app.css?v=232">
+<link rel="stylesheet" href="css/app.css?v=240">
 </head>
 <body>
 
@@ -19,13 +19,16 @@
   <div class="menu-wrap">
     <h1 class="logo"><span>EAGLE<b>EYE</b></span><span>COMMANDER</span></h1>
     <p class="tag">Byg basen. Høst malmen. Send hæren af sted, og se slaget, når alle er klar.</p>
+    <div id="hub" hidden></div>
     <div class="cards">
       <form class="card" id="quickForm">
         <h2>Træfning mod AI</h2>
         <p class="sub">Spil med det samme i browseren. Ingen ventetid.</p>
         <label>Dit navn<input name="name" maxlength="20" value="General" autocomplete="off"></label>
         <div class="fpick" data-for="quick"></div>
-        <label>Modstandere<select name="bots"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
+        <div class="row3"><label>Modstandere<select name="bots"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label>Kort<select name="map"></select></label><label>Størrelse<select name="size"></select></label></div>
+        <div class="row3"><label>Landskab<select name="theme"></select></label><label>Startkapital<select name="money"></select></label></div>
         <button class="btn go" type="submit">Start kamp</button>
         <button class="btn" type="button" id="btnContinue" hidden>Fortsæt gemt træfning</button>
       </form>
@@ -42,7 +45,7 @@
       </form>
     </div>
     <button class="btn" type="button" id="btnSet0"><svg viewBox="0 0 24 24" class="cog" aria-hidden="true"><circle cx="12" cy="12" r="2.8"/><path d="M21.5 10.5L21.5 13.5L18.8 13.8L18.1 15.5L19.8 17.6L17.6 19.8L15.5 18.1L13.8 18.8L13.5 21.5L10.5 21.5L10.2 18.8L8.5 18.1L6.4 19.8L4.2 17.6L5.9 15.5L5.2 13.8L2.5 13.5L2.5 10.5L5.2 10.2L5.9 8.5L4.2 6.4L6.4 4.2L8.5 5.9L10.2 5.2L10.5 2.5L13.5 2.5L13.8 5.2L15.5 5.9L17.6 4.2L19.8 6.4L18.1 8.5L18.8 10.2Z"/></svg> Indstillinger</button>
-    <p class="foot">EagleEye Commander 2.3 · en hyldest til 90'ernes strategispil</p>
+    <p class="foot">EagleEye Commander 2.4 · en hyldest til 90'ernes strategispil</p>
   </div>
 </section>
 
@@ -58,6 +61,7 @@
   <header id="top">
     <button id="btnMenu" class="ibtn" aria-label="Menu"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
     <button id="btnSet" class="ibtn" aria-label="Indstillinger" title="Indstillinger"><svg viewBox="0 0 24 24" class="cog"><circle cx="12" cy="12" r="2.8"/><path d="M21.5 10.5L21.5 13.5L18.8 13.8L18.1 15.5L19.8 17.6L17.6 19.8L15.5 18.1L13.8 18.8L13.5 21.5L10.5 21.5L10.2 18.8L8.5 18.1L6.4 19.8L4.2 17.6L5.9 15.5L5.2 13.8L2.5 13.5L2.5 10.5L5.2 10.2L5.9 8.5L4.2 6.4L6.4 4.2L8.5 5.9L10.2 5.2L10.5 2.5L13.5 2.5L13.8 5.2L15.5 5.9L17.6 4.2L19.8 6.4L18.1 8.5L18.8 10.2Z"/></svg></button>
+    <button id="btnChat" class="ibtn" aria-label="Beskeder og alliancer" title="Beskeder og alliancer" hidden><svg viewBox="0 0 24 24"><path d="M4 5h16v11H10l-5 4v-4H4z"/></svg><i id="chatN" hidden></i></button>
     <div class="brand">EAGLE<b>EYE</b></div>
     <div id="roundInfo"></div>
     <div id="pips"></div>
@@ -94,6 +98,6 @@
 <div id="modal" hidden><div class="box" id="modalBox"></div></div>
 <div id="splash" hidden></div>
 <div id="toast" hidden></div>
-<script type="module" src="js/main.js?v=232"></script>
+<script type="module" src="js/main.js?v=240"></script>
 </body>
 </html>

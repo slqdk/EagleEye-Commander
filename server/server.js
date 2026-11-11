@@ -10,7 +10,7 @@ import zlib from 'node:zlib';
 import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { newGame, addPlayer, addBot, act, maybeResolve, view, replayOf, GameError } from '../public/shared/engine.js';
+import { newGame, addPlayer, addBot, act, maybeResolve, view, replayOf, upgrade, GameError } from '../public/shared/engine.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, '..', 'public');
@@ -24,25 +24,37 @@ if (!fs.existsSync(keyFile)) fs.writeFileSync(keyFile, crypto.randomBytes(32).to
 const SECRET = fs.readFileSync(keyFile, 'utf8').trim();
 
 // ---------- storage ----------
-const games = new Map();
+// Every match is one JSON file. `index` holds a few facts about each of them (for the front page and the deadlines);
+// `games` holds the matches that are in use right now. A match nobody has touched for a while is dropped from memory
+// and read again when somebody comes back.
+const games = new Map(), usedAt = new Map(), index = new Map();
 const fileOf = code => path.join(DATA, code + '.json');
 const validCode = c => /^[A-Z0-9]{6}$/.test(c);
+const now = () => Math.floor(Date.now() / 1000);
+const meta = g => ({ code: g.code, name: g.name, phase: g.phase, round: g.round, created: g.created || 0, deadline: g.deadline || 0, host: g.host,
+  opts: { map: g.opts.map, size: g.opts.size, money: g.opts.money, diplo: g.opts.diplo, open: g.opts.open, roundHours: g.opts.roundHours },
+  players: g.players.map(p => ({ id: p.id, name: p.name, kind: p.kind, alive: p.alive, ready: p.ready })), winner: g.winner ? g.winner.names : null });
+function read(code) { const g = upgrade(JSON.parse(fs.readFileSync(fileOf(code), 'utf8'))); g.code = code; g.savedRev = g.rev; return g; }
 function load(code) {
   code = String(code || '').toUpperCase().trim();
   if (!validCode(code)) return null;
+  usedAt.set(code, Date.now());
   if (games.has(code)) return games.get(code);
-  try { const g = JSON.parse(fs.readFileSync(fileOf(code), 'utf8')); games.set(code, g); return g; } catch { return null; }
+  try { const g = read(code); games.set(code, g); return g; } catch { return null; }
 }
 function save(g) {
   const tmp = fileOf(g.code) + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(g)); fs.renameSync(tmp, fileOf(g.code));
-  g.savedRev = g.rev;
+  g.savedRev = g.rev; index.set(g.code, meta(g)); usedAt.set(g.code, Date.now());
 }
-const now = () => Math.floor(Date.now() / 1000);
 function touch(g) { maybeResolve(g, now()); if (g.savedRev !== g.rev) save(g); }
 function newCode() {
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   for (;;) { let c = ''; for (const b of crypto.randomBytes(6)) c += A[b % A.length]; if (!fs.existsSync(fileOf(c))) return c; }
+}
+for (const f of fs.readdirSync(DATA)) {
+  if (!f.endsWith('.json') || !validCode(f.slice(0, -5))) continue;
+  try { index.set(f.slice(0, -5), meta(read(f.slice(0, -5)))); } catch (e) { console.error('Kan ikke læse', f, e.message); }
 }
 
 // ---------- login ----------
@@ -59,6 +71,12 @@ function hashPin(pin, salt = crypto.randomBytes(12).toString('hex')) {
   return { salt, hash: crypto.scryptSync(String(pin), salt, 32).toString('hex') };
 }
 function checkPin(pin) { pin = String(pin || ''); if (pin.length < 4 || pin.length > 40) throw new GameError('PIN-koden skal være mindst 4 tegn.'); return pin; }
+const made = new Map();      // new matches per address, so nobody can fill the disk
+function mayCreate(ip) {
+  const t = now(), m = made.get(ip);
+  if (m && t - m.at < 3600 && m.n >= 20) throw new GameError('Du har oprettet mange kampe. Vent en times tid.');
+  if (!m || t - m.at >= 3600) made.set(ip, { n: 1, at: t }); else m.n++;
+}
 const fails = new Map();
 function throttle(ip) {
   const t = now(), f = fails.get(ip);
@@ -69,13 +87,30 @@ function failed(ip) { const f = fails.get(ip) || { n: 0, at: now() }; f.n++; fai
 
 // ---------- API ----------
 const api = {
-  health: (b, ip) => ({ ok: true, v: 2, version: VERSION, node: process.version, you: ip, games: fs.readdirSync(DATA).filter(f => f.endsWith('.json')).length }),
-  create(b) {
-    const pin = checkPin(b.pin);
-    const g = newGame({ name: String(b.game || '').trim().slice(0, 24) || 'Operation Ørneøje', seed: crypto.randomBytes(4).readUInt32LE(0),
-      roundHours: Math.max(0, Math.min(168, b.roundHours ?? 24)), peace: Math.max(0, Math.min(10, b.peace ?? 2)), now: now() });
+  health: (b, ip) => ({ ok: true, v: 2, version: VERSION, node: process.version, you: ip, games: index.size, loaded: games.size }),
+  // The front page: the matches this browser has a login for, and the open ones that still wait for generals.
+  list(b) {
+    const mine = [], t = now();
+    (Array.isArray(b.tokens) ? b.tokens.slice(0, 40) : []).forEach((tok, i) => {
+      const m = /^([A-Z0-9]{6})\.(\d+)\.([\w-]+)$/.exec(String(tok || ''));
+      if (!m || sign(m[1] + '.' + m[2]) !== m[3]) return;
+      const g = index.get(m[1]), p = g && g.players.find(q => q.id === +m[2]); if (!p) return;
+      const humans = g.players.filter(q => q.kind === 'human' && q.alive);
+      mine.push({ i, code: g.code, name: g.name, phase: g.phase, round: g.round, deadline: g.deadline, you: p.name, alive: p.alive, host: g.host === p.id,
+        turn: g.phase === 'play' && p.alive && !p.ready, waiting: g.phase === 'play' ? humans.filter(q => !q.ready && q.id !== p.id).map(q => q.name) : [],
+        players: g.players.map(q => q.name), winner: g.winner });
+    });
+    const open = [...index.values()].filter(g => g.phase === 'lobby' && g.opts.open && g.players.length < 6 && t - g.created < 14 * 86400)
+      .sort((a, b) => b.created - a.created).slice(0, 30)
+      .map(g => ({ code: g.code, name: g.name, created: g.created, host: (g.players.find(q => q.id === g.host) || {}).name || '', players: g.players.map(q => q.name), opts: g.opts }));
+    return { mine, open, now: t };
+  },
+  create(b, ip) {
+    const pin = checkPin(b.pin); mayCreate(ip);
+    const g = newGame({ name: String(b.game || '').trim().slice(0, 24) || 'Operation Ørneøje', seed: crypto.randomBytes(4).readUInt32LE(0), now: now(),
+      roundHours: b.roundHours ?? 24, peace: b.peace ?? 2, map: b.map, size: b.size, theme: b.theme, money: b.money, diplo: b.diplo, open: b.open });
     g.code = newCode();
-    const p = addPlayer(g, { name: b.name, faction: b.faction, auth: hashPin(pin) });
+    const p = addPlayer(g, { name: b.name, faction: b.faction, auth: hashPin(pin), now: now() });
     for (let i = 0; i < Math.max(0, Math.min(5, b.bots | 0)); i++) addBot(g);
     games.set(g.code, g); save(g);
     return { token: tokenFor(g, p), view: view(g, p.id, now()) };
@@ -83,7 +118,7 @@ const api = {
   join(b, ip) {
     throttle(ip);
     const g = load(b.code); if (!g) { failed(ip); throw new GameError('Ukendt invitationskode.'); }
-    const p = addPlayer(g, { name: b.name, faction: b.faction, auth: hashPin(checkPin(b.pin)) });
+    const p = addPlayer(g, { name: b.name, faction: b.faction, auth: hashPin(checkPin(b.pin)), now: now() });
     save(g);
     return { token: tokenFor(g, p), view: view(g, p.id, now()) };
   },
@@ -177,7 +212,11 @@ function handle(req, res) {
   const m = /\/api\/(\w+)$/.exec(pathOf(req));
   if (!m) return serveStatic(req, res);
   const op = Object.hasOwn(api, m[1]) ? api[m[1]] : null, ip = clientIp(req);
-  const send = (code, obj) => res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify(obj));
+  const send = (code, obj) => {
+    const head = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }; let out = JSON.stringify(obj);
+    if (out.length > 1400 && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) { out = zlib.gzipSync(out, { level: 5 }); head['Content-Encoding'] = 'gzip'; }
+    res.writeHead(code, head).end(out);
+  };
   if (!op) return send(404, { error: 'Ukendt kald.' });
   let body = '';
   req.on('data', c => { body += c; if (body.length > 300000) req.destroy(); });
@@ -193,9 +232,20 @@ function handle(req, res) {
   });
 }
 
-// deadlines also pass when nobody is looking
+// Once a minute: deadlines also pass when nobody is looking, and matches nobody uses leave the memory
+// (a finished one after ten minutes, any other after six hours; they stay on disk).
 setInterval(() => {
-  for (const f of fs.readdirSync(DATA)) if (f.endsWith('.json')) { const g = load(f.slice(0, -5)); if (g) { try { touch(g); } catch (e) { console.error(f, e); } } }
+  const t = now();
+  for (const m of index.values()) {
+    if (m.phase !== 'play' || !m.deadline || t < m.deadline) continue;
+    const g = load(m.code); if (g) { try { touch(g); } catch (e) { console.error(m.code, e); } }
+  }
+  for (const [code, g] of games) {
+    const idle = Date.now() - (usedAt.get(code) || 0);
+    if (idle > (g.phase === 'over' ? 600e3 : 6 * 3600e3)) { games.delete(code); usedAt.delete(code); }
+  }
+  for (const [ip, f] of fails) if (t - f.at >= 600) fails.delete(ip);
+  for (const [ip, m] of made) if (t - m.at >= 3600) made.delete(ip);
 }, 60000).unref();
 
 server.listen(PORT, HOST, () => console.log(`EagleEye Commander ${VERSION} lytter på http://${HOST || 'localhost'}:${PORT}  (data: ${DATA})`));

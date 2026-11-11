@@ -1,6 +1,6 @@
 # EagleEye Commander — handoff
 
-Status after the third session (v2.3.2, 11 Nov 2026). Read this first when continuing in a new chat.
+Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is v2.3.2). Read this first when continuing in a new chat.
 
 - The game is called **EagleEye Commander** since v2.3.2 (before: Jernfronten 2). Internal names were left alone on purpose: the `jf2-*` keys in `localStorage`, `window.JF`, `JF_OFFLINE`.
 - The code lives in **https://github.com/slqdk/EagleEye-Commander** (public, branch `main`). Søren's server pulls from `main` with `eagleeye-update`, so `main` must always be playable; larger work goes on a branch.
@@ -33,6 +33,22 @@ Status after the third session (v2.3.2, 11 Nov 2026). Read this first when conti
 - **v2.3.1** Søren chose the **military palette as the default** (cartoon is still one click away in the settings). Settings now store only what differs from the defaults (`{ v: 2, ... }`), so a changed default reaches everyone who has not chosen otherwise; a stored 2.3.0 blob with the old default palette follows the new one.
 
 - **v2.3.2** New name, GitHub and installation. `deploy/install.sh` installs or updates on Debian/Ubuntu (Node, clone to `/opt/eagleeye-commander`, user `eagleeye`, data in `/var/lib/eagleeye-commander`, systemd service, health check, the command `eagleeye-update`); `deploy/proxmox-lxc.sh` makes the container on the Proxmox host first. Server: the data folder setting is `DATA_DIR` (`JF_DATA` still works), `HOST` and `TRUSTED_PROXY` are new, static files get an ETag and gzip (still revalidated on every load, so an update reaches everyone at once), the login throttle takes the visitor's address only from a nearby proxy and only the last entry of `X-Forwarded-For`, `api/health` reports the version and the address it sees (`you`).
+
+- **v2.4.0** Match setup, things to fight over, diplomacy and a real front page.
+  - **Front page** ("Mine + åbne kampe", Søren's choice): the browser keeps a login per match (`jf2-tokens`); `api/list` returns my matches with status and the open lobbies. A reload stays in the match (session storage), a new visit shows the front page.
+  - **Lobby options**: map (`random`, `kors`, `grav`, `pas`), landscape (`grass`, `snow`, `desert`, looks only), start money, diplomacy (`fixed`, `notice`, `free`), listed or private, plus deadline and ceasefire as before. Map preview (the client generates the same map from the seed), "Nyt kort", chat.
+  - **Maps** (`map.js`): fixed maps are built in polar coordinates folded into one half sector, so they are alike for every base and exactly symmetric for 2 and 4 players. Output now also has `bridges` and `neutrals`. Every base reaches the middle through fords alone.
+  - **Bridges**: `game.bridges = [{ id, x, y, w, h, cells, a, hp }]`, decks on water cells. Only shot on purpose: an order whose last point is on or next to a standing bridge makes the group a siege group (`u.sg`, mode `siege` in `sim.js`). Ground units on the deck are lost when it falls. `rebridge` rebuilds for `DEFS.bridge.cost`. Søren chose "can be rebuilt".
+  - **Neutral buildings** (`DEFS.neutral`: depot, tower, shop; `game.neut = [{ id, t, x, y, o }]`): block the way, cannot be shot, give sight / income after the battle / healing. Captured only by the new unit **Ingeniør** (`eng`, no weapon, Søren's choice): he follows his group, then walks into the nearest neutral building within `DEFS.capRange` of the target that his team does not hold, and is used up (`result.players[].used`, not a loss). Allowed during the ceasefire. The AI buys one engineer at a time and sends him to the nearest one.
+  - **Alliances**: a team is a number in `p.team` (lobby teams 1-3, pacts from `game.nextTeam`). Actions `ally` (offer, or accept the other's offer), `unally`, `leave`; `p.leaving` for notice. At most half of the living generals in one alliance when it is formed; AI never joins. Allies win together.
+  - **Chat**: `game.chat` (150 lines, system lines for joins, pacts, bridges, eliminations), action `chat` in every phase, to all or to allies (`ids`). Speech bubble in the top bar with an unread count; a toast shows new messages.
+  - **Server**: an index of all matches (front page, deadlines) and a cache of the ones in use; a finished match leaves the memory after ten minutes, any other after six hours. API answers are gzipped. At most 20 new matches per address per hour. `upgrade()` in `engine.js` gives older saved matches the new fields.
+  - **Buildings have their own outlines** (Søren, after seeing the live game: "they are all square"): no more square slab filling the footprint. Cut and round slabs, barrel roofs (`Kit.arch`), an eight-sided radar house, a round-ended tech centre, a six-sided control tower; helpers `slab`, `oct`, `block` in `toon.js`.
+  - New sprites: bridge decks (drawn by `render.js` along the road), depot, lookout tower, field workshop, engineer (hard hat and toolbox, three voice lines each way).
+  - **Soldiers redrawn** (Søren: "identical dolls, make them more military and easier to tell apart"): the uniform is the faction's field cloth with the team colour on shoulders, sleeves and a helmet band; the helmet sits low over a shadowed face; packs, webbing and pouches. Each kind has its own outline: rifle, launcher on the shoulder with spare rockets in the pack, raised stick grenade and field cap, fuel tanks with gas mask and pilot flame, hard hat with spanner and toolbox. `galleri.html?only=i` shows them large.
+  - **Map size** (Søren: "aren't the maps small for a long match?"): `opts.size` = `normal`, `large` (sides x 1.3) or `huge` (x 1.6), in the lobby and in the skirmish form. Larger maps get extra ore fields, and the battle lasts 150 / 180 / 210 seconds (`DEFS.sizes`), because a rifleman walks one cell a second and everybody goes home after each battle. Six AI generals on a huge map take about a second a round to resolve on the build machine (two at worst).
+  - The AI now and then pays to rebuild a fallen bridge (it still never brings one down).
+  - **2.3.3** (also merged into 2.4): a request for a path beginning with `//` made `new URL` throw and stopped the server. The path is now read from the request line, and a failing request is answered with an error instead of ending the process.
 
 ## What was decided
 
@@ -67,23 +83,24 @@ Status after the third session (v2.3.2, 11 Nov 2026). Read this first when conti
 
 ## Known gaps and ideas, roughly in priority order
 
-0. **It has never run for real.** The installer was only run in the build container with a stand-in for systemd; `proxmox-lxc.sh` and the Dockerfile have not been run at all, and no match with real people has been played (update this when Søren reports from his Proxmox). Nothing tells a player that a round has been resolved or that the others are waiting (no mail, push or chat message), which matters most for "play in a busy week".
+0. **No match with real people has been played yet.** The server itself runs for real since 11 Nov 2026 (Proxmox LXC behind Nginx Proxy Manager, installed with `deploy/install.sh`); `proxmox-lxc.sh` and the Dockerfile have still not been run. Not confirmed: that the server sees the visitors' own addresses through the proxy (`"you"` in `api/health`). Nothing tells a player that a round has been resolved or that the others are waiting (no mail, push or chat message), which matters most for "play in a busy week".
 1. **Balance is a first pass.** Only AI-vs-AI tested. Watch: early infantry rushes right after the ceasefire, Pagten's lightning tower, artillery.
 2. **Playback leaks hidden information.** The client receives the full pre-round snapshot (the shroud is applied when drawing). Fine among friends; fix by recording per-team keyframes on the server.
-3. Not ported from v66 yet: mines, the A-bomb, the shared fortress, snow maps, PWA service worker.
+3. Not ported from v66 yet: mines, the A-bomb, the shared fortress, PWA service worker.
 4. Aircraft are a first version: no air-to-air combat, no transport, landed aircraft can only be hit by anti-air weapons, and aircraft in a mixed group fly ahead of the ground units.
 5. Walls are drawn as separate blocks (no joined corners). Vehicles do not show damage on the sprite itself (only smoke), and infantry is still a simple 2D figure.
 6. AI knows where every base is and always attacks the nearest; no difficulty levels.
 7. Music and voices have not been heard by anyone yet (see v2.2.0): expect to adjust the mix, the radio effect or single lines. The new volume sliders make that easy to try.
    The graphics were only looked at as screenshots from a headless browser: speed on a real phone at high detail is untested (low detail and "Skarphed: Normal" are the fallbacks).
 8. Late joining after the match has started is not possible; a spectator link does not exist.
-9. Teams exist (lobby: Hold 1–3, shared vision, no friendly fire) but have only been tested lightly.
+9. New in 2.4 and only tried by the AI and by scripted browsers: bridge sieges, engineers, alliances, chat. Watch for: random maps where the way round a fallen bridge is very long (seen: 251 cells instead of 65), bridges that make a map lopsided, depots that pay too much (400 a round), alliances in a three-player match (two against one until one leaves). The AI never attacks a bridge and never allies.
+10. Chat and the front page are polled (4 and 20 seconds); nothing is pushed, and there is still no notice outside the page that it is your turn.
 
 ## Content backlog (from the "what is missing" talks; nothing here is decided)
 
 - Interface: mouse cursors that change over targets, control groups on Ctrl+1-9, a sidebar and menus that follow the palette, an end-of-match screen with graphs.
-- Units and buildings: engineer (captures buildings) and spy; a mobile construction yard for a second base; a superweapon with a countdown everyone sees (v66 had the A-bomb); navy (yard, ships, submarines; the maps already have water); transport, mine layer and paratroopers; a repair depot and silos; bonus crates on the map.
-- Match setup: snow and desert maps, fixed hand-made maps, start money and tech level in the lobby, destructible bridges, neutral buildings to fight over, alliances and chat during the match, a campaign with briefings (large, and a poor fit for a friend group).
+- Units and buildings: an engineer who can also take enemy buildings, and a spy; a mobile construction yard for a second base; a superweapon with a countdown everyone sees (v66 had the A-bomb); navy (yard, ships, submarines; the maps already have water); transport, mine layer and paratroopers; a repair depot and silos; bonus crates on the map.
+- Match setup: tech level in the lobby, a campaign with briefings (large, and a poor fit for a friend group). (Done in 2.4: maps, landscapes, start money, bridges, neutral buildings, alliances, chat.)
 - Orders: more than "go there and hunt": hold a spot, escort, pick a kind of target, leave later than the other groups. Probably the cheapest way to add skill to a game without unit control.
 - Look: joined walls and gates, damage on vehicle sprites, infantry that aims and falls, craters and wrecks that stay between rounds.
 - Søren's earlier pick was atmosphere first (done in v2.2-2.3); the suggestion after that was engineer + mobile construction yard.

@@ -14,7 +14,7 @@ const tryAct = (game, p, a) => { try { act(game, p.id, a); return true; } catch 
 const count = (p, t) => p.buildings.filter(b => b.t === t).length;
 
 export function findSpot(game, p, t, R) {
-  const n = game.map.n, d = BD[t], occ = makeOcc(game.map, game.ore, game.players.flatMap(q => q.alive ? q.buildings : []));
+  const n = game.map.n, d = BD[t], occ = makeOcc(game.map, game.ore, game.players.flatMap(q => q.alive ? q.buildings : []), game.neut);
   const hq = p.buildings.find(b => b.t === 'hq') || p.buildings.find(b => !BD[b.t].wall); if (!hq) return null;
   const cx = hq.x + BD[hq.t].w / 2, cy = hq.y + BD[hq.t].h / 2;
   let px = cx, py = cy;
@@ -58,7 +58,18 @@ export function aiTurn(game, p, R) {
     if (!tryAct(game, p, { a: 'build', t: target, x: s[0], y: s[1] })) break;
   }
 
-  // 3. spend the rest on troops (keep some back for the next building early on)
+  // a fallen bridge is put up again now and then, or the way round may be too long for an attack to arrive
+  const down = (game.bridges || []).filter(b => !(b.hp > 0));
+  if (down.length && p.money >= DEFS.bridge.cost + 1500 && (game.round + p.id) % 2 === 0) {
+    const hq = p.buildings.find(b => b.t === 'hq') || p.buildings[0];
+    down.sort((a, b) => Math.hypot(a.x - hq.x, a.y - hq.y) - Math.hypot(b.x - hq.x, b.y - hq.y));
+    tryAct(game, p, { a: 'rebridge', id: down[0].id });
+  }
+  // 3. an engineer when there is a neutral building to take, then the rest on troops (keep some back for the next building early on)
+  const me = p.buildings.find(b => b.t === 'hq') || p.buildings[0];
+  const free = (game.neut || []).filter(q => { const o = game.players.find(x => x.id === q.o); return !o || !allied(p, o); })
+    .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+  if (free.length && game.round >= 2 && !(p.army.eng | 0) && !trainBlock(p, 'eng') && armySize(p) < DEFS.unitCap) tryAct(game, p, { a: 'train', t: 'eng', n: 1 });
   const reserve = game.round < 9 ? nextCost * 0.6 : 0;
   const refs = count(p, 'ref');
   if (refs && game.round >= 4 && (p.army.harv | 0) < refs && !trainBlock(p, 'harv') && p.money - reserve >= UD.harv.cost + 500) tryAct(game, p, { a: 'train', t: 'harv', n: 1 });
@@ -73,21 +84,26 @@ export function aiTurn(game, p, R) {
     if (!best || !tryAct(game, p, { a: 'train', t: best, n: 1 })) break;
   }
 
-  // 4. attack
-  if (peaceLeft(game) > 0) return;
-  const combat = Object.entries(p.army).filter(([t]) => !UD[t].harv);
+  // 4. orders: the engineer goes for the nearest neutral building that is not ours, the army attacks
+  const orders = [];
+  if (free.length && (p.army.eng | 0)) {
+    const escort = peaceLeft(game) > 0 ? 0 : Math.min(3, Math.max(0, (p.army.inf | 0) - 2));
+    orders.push({ units: escort ? { eng: 1, inf: escort } : { eng: 1 }, pts: [[free[0].x, free[0].y + 2]] });
+  }
+  const combat = Object.entries(p.army).filter(([t]) => UD[t].weapon);
   const total = combat.reduce((s, [, c]) => s + c, 0);
   const enemies = game.players.filter(q => q.alive && !allied(p, q) && q.buildings.length);
-  if (total < 7 || !enemies.length || R() < 0.3) return;
-  const me = p.buildings.find(b => b.t === 'hq') || p.buildings[0];
-  const dist = q => { const b = q.buildings.find(x => x.t === 'hq') || q.buildings[0]; return Math.hypot(b.x - me.x, b.y - me.y); };
-  enemies.sort((a, b) => dist(a) - dist(b));
-  const target = R() < 0.3 ? enemies[(R() * enemies.length) | 0] : enemies[0];
-  const tb = target.buildings.filter(b => !BD[b.t].wall), aim = tb[(R() * tb.length) | 0] || target.buildings[0];
-  const units = {};
-  for (const [t, c] of combat) {
-    const long = UD[t].weapon.range >= 8, send = long ? c : t === 'inf' ? Math.max(0, Math.round(c * 0.7) - 1) : Math.round(c * 0.75);
-    if (send > 0) units[t] = send;
+  if (peaceLeft(game) <= 0 && total >= 7 && enemies.length && R() >= 0.3) {
+    const dist = q => { const b = q.buildings.find(x => x.t === 'hq') || q.buildings[0]; return Math.hypot(b.x - me.x, b.y - me.y); };
+    enemies.sort((a, b) => dist(a) - dist(b));
+    const target = R() < 0.3 ? enemies[(R() * enemies.length) | 0] : enemies[0];
+    const tb = target.buildings.filter(b => !BD[b.t].wall), aim = tb[(R() * tb.length) | 0] || target.buildings[0];
+    const units = {};
+    for (const [t, c] of combat) {
+      const long = UD[t].weapon.range >= 8, send = long ? c : t === 'inf' ? Math.max(0, Math.round(c * 0.7) - 1) : Math.round(c * 0.75);
+      if (send > 0) units[t] = send;
+    }
+    orders.push({ units, pts: [[aim.x + 1, aim.y + 1]] });
   }
-  tryAct(game, p, { a: 'orders', orders: [{ units, pts: [[aim.x + 1, aim.y + 1]] }] });
+  if (orders.length) tryAct(game, p, { a: 'orders', orders });
 }

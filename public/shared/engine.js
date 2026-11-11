@@ -1,7 +1,7 @@
 // EagleEye Commander — rules: lobby, economy, building, training, orders and round resolution.
 // Pure functions on a plain game object, so the same code runs on the server and in offline play.
 import { DEFS } from './defs.js';
-import { generateMap } from './map.js';
+import { generateMap, MAP_KINDS } from './map.js';
 import { createSim, dockOf } from './sim.js';
 import { mulberry32, hashStr, packBits, unpackBits, oreToArr, oreToStr, stamp } from './util.js';
 import { aiTurn } from './ai.js';
@@ -13,13 +13,40 @@ const BOTS = ['Oberst Krag', 'Major Holm', 'General Brandt', 'Kaptajn Vinter', '
 
 export const teamKey = p => p.team ? 'T' + p.team : 'P' + p.id;
 export const allied = (a, b) => teamKey(a) === teamKey(b);
+const mates = (game, p) => game.players.filter(q => q.alive && allied(p, q));      // p's alliance, p included
 
 // ---------- lobby ----------
-export function newGame({ name, seed, roundHours = 24, peace = DEFS.peaceRounds, now = 0 }) {
-  return { v: 2, name, seed: seed >>> 0, phase: 'lobby', round: 0, deadline: 0, opts: { roundHours, peace }, nextId: 1, host: 0,
-    players: [], map: null, ore: '', last: null, winner: null, rev: 1, created: now };
+const OPTS = { roundHours: 24, peace: DEFS.peaceRounds, map: 'random', size: 'normal', theme: 'grass', money: DEFS.startMoney, diplo: 'notice', open: true };
+export function newGame({ name, seed, now = 0, ...opts }) {
+  const game = { v: 2, name, seed: seed >>> 0, phase: 'lobby', round: 0, deadline: 0, opts: { ...OPTS }, nextId: 1, host: 0,
+    players: [], map: null, ore: '', bridges: [], neut: [], chat: [], chatId: 0, offers: [], nextTeam: 4, last: null, winner: null, rev: 1, created: now };
+  setOpts(game, opts);
+  return game;
 }
-export function addPlayer(game, { name, kind = 'human', faction = 'A', team = 0, auth = null }) {
+// A match saved by an older version gets the fields that have been added since.
+export function upgrade(game) {
+  game.opts = { ...OPTS, diplo: 'fixed', open: false, ...game.opts };
+  for (const k of ['bridges', 'neut', 'chat', 'offers']) if (!Array.isArray(game[k])) game[k] = [];
+  game.chatId = game.chatId | 0; game.nextTeam = game.nextTeam || 4;
+  return game;
+}
+function setOpts(game, a) {
+  const o = game.opts;
+  if (a.roundHours != null) o.roundHours = Math.max(0, Math.min(168, +a.roundHours || 0));
+  if (a.peace != null) o.peace = Math.max(0, Math.min(10, a.peace | 0));
+  if (a.map != null && MAP_KINDS.includes(a.map)) o.map = a.map;
+  if (a.size != null && DEFS.sizes[a.size]) o.size = a.size;
+  if (a.theme != null && DEFS.themes[a.theme]) o.theme = a.theme;
+  if (a.money != null && DEFS.moneyChoices.includes(+a.money)) o.money = +a.money;
+  if (a.diplo != null && DEFS.diplo[a.diplo]) o.diplo = a.diplo;
+  if (a.open != null) o.open = !!a.open;
+}
+// A line in the chat. from 0 = the game itself. ids: only these generals see it.
+function say(game, from, text, now = 0, ids = null) {
+  game.chat.push({ id: ++game.chatId, t: now, from, text, ...(ids ? { ids } : {}) });
+  if (game.chat.length > 150) game.chat.splice(0, game.chat.length - 150);
+}
+export function addPlayer(game, { name, kind = 'human', faction = 'A', team = 0, auth = null, now = 0 }) {
   if (game.phase !== 'lobby') fail('Kampen er allerede i gang.');
   if (game.players.length >= 6) fail('Kampen er fuld (højst 6 generaler).');
   name = String(name || '').trim().slice(0, 20); if (!name) fail('Skriv et navn.');
@@ -30,6 +57,7 @@ export function addPlayer(game, { name, kind = 'human', faction = 'A', team = 0,
     explored: '', known: {}, alive: true, trained: {}, stats: { killed: 0, lost: 0, bKilled: 0, bLost: 0, income: 0 }, report: null, auth };
   game.players.push(p);
   if (!game.host && kind === 'human') game.host = p.id;
+  else say(game, 0, name + ' er med.', now);
   game.rev++;
   return p;
 }
@@ -41,17 +69,20 @@ export function addBot(game, faction) {
 export function startGame(game, now) {
   if (game.phase !== 'lobby') fail('Kampen er allerede i gang.');
   const k = game.players.length; if (k < 2) fail('Der skal mindst to generaler til en kamp.');
-  const map = generateMap(game.seed, k), n = map.n, R = mulberry32(game.seed ^ 0x5bd1e995);
+  const map = generateMap(game.seed, k, game.opts.map, game.opts.size), n = map.n, R = mulberry32(game.seed ^ 0x5bd1e995);
   game.map = { n, t: map.t, starts: map.starts }; game.ore = oreToStr(map.ore);
+  game.bridges = map.bridges.map(b => ({ id: game.nextId++, x: b.x, y: b.y, w: b.w, h: b.h, cells: b.cells, a: b.a, hp: DEFS.bridge.hp }));
+  game.neut = map.neutrals.map(q => ({ id: game.nextId++, t: q.t, x: q.x, y: q.y, o: 0 }));
   const slots = map.starts.map((_, i) => i);
   for (let i = slots.length - 1; i > 0; i--) { const j = (R() * (i + 1)) | 0; [slots[i], slots[j]] = [slots[j], slots[i]]; }
   game.players.forEach((p, i) => {
     const s = map.starts[slots[i]]; p.slot = slots[i];
     p.buildings = [{ id: game.nextId++, t: 'hq', x: s.x - 1, y: s.y - 1, hp: BD.hq.hp }];
-    p.money = DEFS.startMoney; p.army = { ...DEFS.startArmy }; p.alive = true; p.ready = false;
+    p.money = game.opts.money; p.army = { ...DEFS.startArmy }; p.alive = true; p.ready = false;
     const e = new Uint8Array(n * n); stamp(e, n, s.x, s.y, BD.hq.sight + 2); p.explored = packBits(e);
   });
   game.phase = 'play'; game.round = 1; setDeadline(game, now); game.rev++;
+  say(game, 0, 'Kampen er i gang på ' + (game.opts.map === 'random' ? 'et tilfældigt kort' : DEFS.maps[game.opts.map]) + '.', now);
 }
 function setDeadline(game, now) { game.deadline = game.opts.roundHours > 0 ? Math.round(now + game.opts.roundHours * 3600) : 0; }
 export const peaceLeft = game => Math.max(0, game.opts.peace - game.round + 1);
@@ -91,9 +122,10 @@ export function trainBlock(p, t, ps = powerState(p)) {
 
 // ---------- placement ----------
 // occ: 1 where nothing can be built (terrain, ore, buildings, refinery gates).
-export function makeOcc(map, ore, buildings) {
+export function makeOcc(map, ore, buildings, neut = []) {
   const n = map.n, occ = new Uint8Array(n * n), T = map.t;
   for (let i = 0; i < occ.length; i++) if (T[i] !== '.' || ore[i] !== '0') occ[i] = 1;
+  for (const q of neut) for (let y = q.y; y < q.y + 2; y++) for (let x = q.x; x < q.x + 2; x++) occ[y * n + x] = 2;
   for (const b of buildings) {
     const d = BD[b.t];
     for (let y = b.y; y < b.y + d.h; y++) for (let x = b.x; x < b.x + d.w; x++) occ[y * n + x] = 2;
@@ -115,7 +147,7 @@ export function placeBlock(occ, n, own, t, x, y) {
   return near ? '' : 'For langt fra dine bygninger.';
 }
 const allBuildings = game => game.players.flatMap(p => p.alive ? p.buildings : []);
-const occOf = game => makeOcc(game.map, game.ore, allBuildings(game));
+const occOf = game => makeOcc(game.map, game.ore, allBuildings(game), game.neut);
 
 function reveal(game, p, cx, cy, r) {
   const n = game.map.n, e = unpackBits(p.explored, n * n); stamp(e, n, cx, cy, r); p.explored = packBits(e);
@@ -150,14 +182,23 @@ function cleanOrders(p, orders) {
 export function act(game, pid, a, now = 0) {
   const p = game.players.find(q => q.id === pid); if (!p) fail('Ukendt spiller.');
   const host = game.host === p.id;
+  if (a.a === 'chat') {      // works before, during and after the match
+    const text = String(a.text || '').replace(/\s+/g, ' ').trim().slice(0, 240); if (!text) fail('Skriv en besked.');
+    const mine = game.chat.filter(m => m.from === p.id).slice(-4);
+    if (mine.length === 4 && now - mine[0].t < 8) fail('Rolig nu. Vent et øjeblik, før du skriver igen.');
+    let ids = null;
+    if (a.to === 'team') { ids = game.players.filter(q => allied(p, q)).map(q => q.id); if (ids.length < 2) fail('Du har ingen allierede at skrive til.'); }
+    say(game, p.id, text, now, ids); game.rev++; return;
+  }
   if (game.phase === 'lobby') {
     if (a.a === 'faction') { if (!DEFS.factions[a.f]) fail('Ukendt fraktion.'); p.faction = a.f; }
     else if (a.a === 'team') p.team = Math.max(0, Math.min(3, a.team | 0));
     else if (a.a === 'addBot') { if (!host) fail('Kun værten kan tilføje AI.'); addBot(game, a.f); }
     else if (a.a === 'botSet') { if (!host) fail('Kun værten.'); const b = game.players.find(q => q.id === a.id && q.kind === 'ai'); if (b) { if (DEFS.factions[a.f]) b.faction = a.f; if (a.team != null) b.team = Math.max(0, Math.min(3, a.team | 0)); } }
     else if (a.a === 'kick') { if (!host) fail('Kun værten.'); const i = game.players.findIndex(q => q.id === a.id && q.kind === 'ai'); if (i >= 0) game.players.splice(i, 1); }
-    else if (a.a === 'opts') { if (!host) fail('Kun værten.'); if (a.roundHours != null) game.opts.roundHours = Math.max(0, Math.min(168, +a.roundHours || 0)); if (a.peace != null) game.opts.peace = Math.max(0, Math.min(10, a.peace | 0)); }
-    else if (a.a === 'start') { if (!host) fail('Kun værten kan starte kampen.'); startGame(game, now); }
+    else if (a.a === 'opts') { if (!host) fail('Kun værten.'); setOpts(game, a); }
+    else if (a.a === 'reseed') { if (!host) fail('Kun værten.'); game.seed = hashStr(game.seed + ':nyt:' + game.rev); }
+    else if (a.a === 'start') { if (!host) fail('Kun værten kan starte kampen.'); startGame(game, now); return; }
     else fail('Kampen er ikke startet endnu.');
     game.rev++; return;
   }
@@ -224,9 +265,61 @@ export function act(game, pid, a, now = 0) {
       break;
     }
     case 'ready': p.ready = !!a.on; break;
+    case 'rebridge': {
+      const b = game.bridges.find(q => q.id === a.id); if (!b) fail('Broen findes ikke.');
+      if (b.hp > 0) fail('Broen står endnu.');
+      if (p.money < DEFS.bridge.cost) fail('Utilstrækkelige midler.');
+      p.money -= DEFS.bridge.cost; b.hp = DEFS.bridge.hp;
+      say(game, 0, p.name + ' har genopbygget en bro.', now);
+      break;
+    }
+    case 'ally': {      // offer an alliance, or accept the one that general has offered
+      if (game.opts.diplo === 'fixed') fail('Holdene ligger fast i denne kamp.');
+      const q = game.players.find(x => x.id === a.id);
+      if (!q || q === p || !q.alive) fail('Ukendt general.');
+      if (allied(p, q)) fail('I er allerede allierede.');
+      if (q.kind === 'ai') fail(q.name + ' indgår ikke pagter.');
+      const mine = mates(game, p), theirs = mates(game, q), max = Math.ceil(game.players.filter(x => x.alive).length / 2);
+      if (mine.length > 1 && theirs.length > 1) fail('I er begge i en alliance. En af jer må forlade sin først.');
+      if (mine.length + theirs.length > max) fail('Alliancen bliver for stor. Lige nu må en alliance højst have ' + max + (max === 1 ? ' general.' : ' generaler.'));
+      if (game.offers.some(o => o.from === q.id && o.to === p.id)) {
+        const tid = mine.length > 1 ? p.team : theirs.length > 1 ? q.team : game.nextTeam++;
+        for (const x of [...mine, ...theirs]) { x.team = tid; delete x.leaving; }
+        game.offers = game.offers.filter(o => !((o.from === p.id && o.to === q.id) || (o.from === q.id && o.to === p.id)));
+        say(game, 0, q.name + ' og ' + p.name + ' har indgået en alliance.', now);
+      } else if (!game.offers.some(o => o.from === p.id && o.to === q.id)) {
+        game.offers.push({ from: p.id, to: q.id, round: game.round });
+        say(game, 0, p.name + ' tilbyder ' + q.name + ' en alliance.', now, [p.id, q.id]);
+      }
+      break;
+    }
+    case 'unally': {    // take my offer back, or turn theirs down
+      const before = game.offers.length;
+      game.offers = game.offers.filter(o => !((o.from === p.id && o.to === a.id) || (o.from === a.id && o.to === p.id)));
+      if (game.offers.length === before) fail('Der er intet tilbud at trække tilbage.');
+      break;
+    }
+    case 'leave': {
+      if (game.opts.diplo === 'fixed') fail('Holdene ligger fast i denne kamp.');
+      if (mates(game, p).length < 2) fail('Du er ikke i en alliance.');
+      if (game.opts.diplo === 'free') { leaveTeam(game, p); say(game, 0, p.name + ' har brudt sin alliance.', now); }
+      else if (p.leaving) fail('Du har allerede opsagt alliancen.');
+      else { p.leaving = true; say(game, 0, p.name + ' har opsagt sin alliance. Den gælder til og med næste slag.', now); }
+      break;
+    }
     default: fail('Ukendt handling.');
   }
   game.rev++;
+}
+
+// Out of the alliance: the former allies know each other's bases, and from now on they can shoot at each other.
+function leaveTeam(game, p) {
+  for (const q of mates(game, p)) {
+    if (q === p) continue;
+    for (const b of q.buildings) p.known[b.id] = { t: b.t, x: b.x, y: b.y, o: q.id };
+    for (const b of p.buildings) q.known[b.id] = { t: b.t, x: b.x, y: b.y, o: p.id };
+  }
+  p.team = 0; delete p.leaving;
 }
 
 // Resolve when every living human is ready, or when the deadline has passed.
@@ -240,7 +333,8 @@ export function maybeResolve(game, now) {
 
 export function buildSnapshot(game) {
   return {
-    map: game.map, ore: game.ore, seed: hashStr(game.seed + ':' + game.round), round: game.round, peace: peaceLeft(game) > 0, duration: DEFS.roundSeconds,
+    map: game.map, ore: game.ore, seed: hashStr(game.seed + ':' + game.round), round: game.round, peace: peaceLeft(game) > 0, duration: (DEFS.sizes[game.opts.size] || DEFS.sizes.normal).seconds,
+    bridges: game.bridges.map(b => ({ ...b })), neut: game.neut.map(q => ({ ...q })),
     players: game.players.filter(p => p.alive).map(p => {
       const ps = powerState(p);
       return { id: p.id, name: p.name, team: teamKey(p), faction: p.faction, color: p.color, explored: p.explored, harv: harvCount(p, ps),
@@ -255,6 +349,8 @@ export function resolveRound(game, now = 0) {
   for (const p of game.players) if (p.alive && p.kind === 'ai') { try { aiTurn(game, p, R); } catch (e) { if (!(e instanceof GameError)) throw e; } }
   const snap = buildSnapshot(game), res = createSim(snap).run();
   const dead = new Set(res.dead), out = [], n = game.map.n;
+  game.bridges.forEach((b, i) => { if (b.hp > 0 && res.bridges[i] === 0) say(game, 0, 'En bro er sprængt.', now); b.hp = res.bridges[i]; });
+  game.neut.forEach((q, i) => { q.o = res.neut[i]; });
   const byId = new Map(game.players.map(p => [p.id, p]));
   snap.players.forEach((sp, i) => {
     const p = byId.get(sp.id), r = res.players[i];
@@ -268,10 +364,12 @@ export function resolveRound(game, now = 0) {
       c = Math.min(c, p.army[t] | 0); if (!c) continue;
       p.army[t] -= c; if (!p.army[t]) delete p.army[t]; lost[t] = c; lostValue += UD[t].cost * c;
     }
-    const income = r.income + DEFS.hqIncome + aid;
+    for (const t in r.used) { const c = Math.min(r.used[t], p.army[t] | 0); if (c) { p.army[t] -= c; if (!p.army[t]) delete p.army[t]; } }      // engineers who stayed in a building
+    const depot = game.neut.filter(q => q.o === p.id && DEFS.neutral[q.t].income).reduce((v, q) => v + DEFS.neutral[q.t].income, 0);
+    const income = r.income + DEFS.hqIncome + aid + depot;
     p.money += income; p.explored = r.explored;
     p.stats.killed += r.killed; p.stats.lost += lostValue; p.stats.bKilled += r.bKilled; p.stats.bLost += r.bLost; p.stats.income += income;
-    p.report = { round: game.round, income: r.income, supply: DEFS.hqIncome, aid, lost, lostValue, killed: r.killed, bLost: r.bLost, bKilled: r.bKilled };
+    p.report = { round: game.round, income: r.income, supply: DEFS.hqIncome, aid, depot, lost, lostValue, killed: r.killed, bLost: r.bLost, bKilled: r.bKilled };
     p.seenNow = r.seen;
     p.orders = []; p.ready = false; p.trained = {};
   });
@@ -291,16 +389,24 @@ export function resolveRound(game, now = 0) {
   }
   for (const c of add) ore[c] = 2;
   game.ore = oreToStr(ore);
+  // alliances that were given notice end now, after the battle
+  for (const p of game.players) if (p.alive && p.leaving) { leaveTeam(game, p); say(game, 0, p.name + ' er trådt ud af sin alliance.', now); }
   // eliminations and victory
   for (const p of game.players) {
-    if (p.alive && !p.buildings.some(b => !BD[b.t].wall)) { p.alive = false; p.army = {}; p.buildings = []; out.push(p.name); }
+    if (p.alive && !p.buildings.some(b => !BD[b.t].wall)) {
+      p.alive = false; p.army = {}; p.buildings = []; out.push(p.name);
+      for (const q of game.neut) if (q.o === p.id) q.o = 0;
+      say(game, 0, p.name + ' er slået ud.', now);
+    }
   }
+  game.offers = game.offers.filter(o => game.round - o.round < 3 && byId.get(o.from).alive && byId.get(o.to).alive);
   for (const p of game.players) for (const id in p.known) { const k = p.known[id], o = byId.get(k.o); if (!o || !o.alive) delete p.known[id]; }
   const alive = game.players.filter(p => p.alive), teamsAlive = [...new Set(alive.map(teamKey))];
   game.last = { round: game.round, snap, out };
   if (teamsAlive.length <= 1 || !alive.some(p => p.kind === 'human')) {
     game.phase = 'over'; game.winner = { team: teamsAlive[0] || null, names: teamsAlive.length === 1 ? alive.map(p => p.name) : [] };
     if (teamsAlive.length > 1) { const best = [...alive].sort((a, b) => b.stats.killed - a.stats.killed)[0]; game.winner = { team: teamKey(best), names: alive.filter(p => allied(p, best)).map(p => p.name) }; }
+    if (game.winner.names.length) say(game, 0, 'Sejr til ' + game.winner.names.join(' og ') + '.', now);
   }
   game.round++; setDeadline(game, now); game.rev++;
 }
@@ -308,12 +414,15 @@ export function resolveRound(game, now = 0) {
 // ---------- what a player gets to see ----------
 export function view(game, pid, now = 0) {
   const me = game.players.find(p => p.id === pid);
-  const pub = p => ({ id: p.id, name: p.name, kind: p.kind, faction: p.faction, color: p.color, team: p.team, alive: p.alive, ready: p.ready, stats: p.stats });
+  const pub = p => ({ id: p.id, name: p.name, kind: p.kind, faction: p.faction, color: p.color, team: p.team, alive: p.alive, ready: p.ready, stats: p.stats, ...(p.leaving ? { leaving: true } : {}) });
   const strip = p => { const { auth, ...rest } = p; return rest; };
   return {
     rev: game.rev, name: game.name, code: game.code || '', phase: game.phase, round: game.round, deadline: game.deadline, opts: game.opts, host: game.host,
     peaceLeft: game.phase === 'play' ? peaceLeft(game) : 0, winner: game.winner, now,
-    map: game.map, ore: game.ore,
+    map: game.map, ore: game.ore, bridges: game.bridges, neut: game.neut,
+    seed: game.phase === 'lobby' ? game.seed : 0,      // lets the lobby draw the map that the start will make
+    chat: game.chat.filter(m => !m.ids || m.ids.includes(pid)).map(({ ids, ...m }) => (ids ? { ...m, team: 1 } : m)),
+    offers: game.offers.filter(o => o.from === pid || o.to === pid),
     me: me ? strip(me) : null,
     players: game.players.map(pub),
     allies: me && game.map ? game.players.filter(p => p !== me && p.alive && allied(p, me)).map(p => ({ id: p.id, buildings: p.buildings, army: p.army })) : [],

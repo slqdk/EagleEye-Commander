@@ -1,5 +1,5 @@
 <!doctype html><meta charset="utf-8"><title>Galleri</title>
-<!-- Sprite sheet for working on the art.  ?p=cartoon  ?d=low  ?o=thin  ?s=96 (pixels per cell)  ?dmg=1|2  ?only=b|u -->
+<!-- Sprite sheet for working on the art.  ?p=cartoon  ?d=low  ?o=thin  ?s=96 (pixels per cell)  ?dmg=1|2  ?only=b|u|n|i (n = neutral buildings and the engineer, i = the infantry, large) -->
 <body style="margin:0;background:#8a9a5b">
 <canvas id="c"></canvas>
 <script type="module">
@@ -8,13 +8,25 @@ import { DEFS } from './shared/defs.js';
 const q = new URLSearchParams(location.search), S = +q.get('s') || 64, K = S / 64, dmg = +q.get('dmg') || 0, only = q.get('only');
 setStyle({ palette: q.get('p') || 'military', detail: q.get('d') || 'high', outline: q.get('o') || 'thick' });
 if (q.get('p') === 'cartoon') document.body.style.background = '#7cc04b';
-const cv = document.getElementById('c'); cv.width = 1500 * K; cv.height = (only === 'b' ? 960 : only === 'u' ? 1560 : 2400) * K;
+const cv = document.getElementById('c'); cv.width = 1500 * K; cv.height = (only === 'b' ? 1230 : only === 'u' ? 1560 : only === 'n' ? 400 : 2670) * K;
 const g = cv.getContext('2d');
 const draw = (sp, x, y, k = 1) => g.drawImage(sp.cv, x - sp.ax * k, y - sp.ay * k, sp.cv.width * k, sp.cv.height * k);
 const sh = (sp, x, y) => { if (!sp.sh) return; g.globalAlpha = 0.25; g.drawImage(sp.sh.cv, x - sp.sh.ax, y - sp.sh.ay); g.globalAlpha = 1; };
 const t0 = performance.now();
 let y = 150 * K;
-if (only !== 'u') {
+if (only === 'i') {      // the infantry alone, large: every kind in eight directions, walking frames, both factions
+  cv.height = 760 * K; let yy = 110 * K;
+  for (const [f, col] of [['A', 0], ['P', 1], ['A', 2], ['P', 4]]) { let x = 60 * K; for (const t of Object.keys(DEFS.units)) { const d = DEFS.units[t]; if (d.cls !== 'inf' || !d.f.includes(f)) continue; for (let dir = 0; dir < 8; dir++) { draw(sprite(t, S, { dir, color: col, faction: f, frame: dir % 3 }), x, yy); x += 34 * K; } x += 22 * K; } yy += 62 * K; }
+  for (const [f, col] of [['A', 0], ['P', 1]]) { let x = 80 * K; for (const t of Object.keys(DEFS.units)) { const d = DEFS.units[t]; if (d.cls !== 'inf' || !d.f.includes(f)) continue; for (const dir of [2, 0, 6]) { draw(sprite(t, S * 3, { dir, color: col, faction: f }), x, yy + 110 * K); x += 92 * K; } x += 20 * K; } yy += 190 * K; }
+}
+const neutralRow = () => {
+  let x = 110 * K;
+  for (const col of [-1, 0, 1]) { for (const t of Object.keys(DEFS.neutral)) { const sp = sprite(t, S, { color: col, faction: 'N' }); x += S; sh(sp, x, y); draw(sp, x, y); x += S + 22 * K; } x += 20 * K; }
+  x = 110 * K; for (const f of ['A', 'P']) { for (let dir = 0; dir < 8; dir++) { draw(sprite('eng', S, { dir, color: f === 'A' ? 0 : 1, faction: f, frame: dir % 3 }), x, y + 110 * K); x += 30 * K; } x += 16 * K; }
+};
+if (only === 'i') { /* drawn above */ }
+else if (only === 'n') { y = 200 * K; neutralRow(); }
+else if (only !== 'u') {
   ['A', 'P'].forEach((f, fi) => {
     let x = 120 * K;
     for (const t of Object.keys(DEFS.buildings)) {
@@ -27,9 +39,9 @@ if (only !== 'u') {
     }
     y += 270 * K;
   });
-  y -= 60 * K;
+  neutralRow(); y += 210 * K;
 } else y = 60 * K;
-if (only !== 'b') {
+if (only !== 'b' && only !== 'n' && only !== 'i') {
   ['A', 'P'].forEach((f, fi) => {
     for (const t of Object.keys(DEFS.units)) {
       const d = DEFS.units[t]; if (!d.f.includes(f) || d.cls === 'inf') continue;

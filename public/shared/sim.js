@@ -70,6 +70,8 @@ export function assignGroups(list, orders) {
 }
 
 export const dockOf = b => [b.x + 1, b.y + DEFS.buildings[b.t].h];
+// The bridge an order points at (its last route point lies on the deck or right next to it). Shared with the client.
+export const bridgeAt = (bridges, pt) => (bridges || []).find(b => pt[0] >= b.x - 1 && pt[0] <= b.x + b.w && pt[1] >= b.y - 1 && pt[1] <= b.y + b.h) || null;
 
 export function createSim(snap) {
   const D = DEFS, n = snap.map.n, N = n * n, T = snap.map.t, dt = D.tick, OD = D.ore;
@@ -82,7 +84,7 @@ export function createSim(snap) {
   const teams = [];
   const P = snap.players.map((p, i) => {
     let ti = teams.indexOf(p.team); if (ti < 0) { ti = teams.length; teams.push(p.team); }
-    return { i, id: p.id, ti, faction: p.faction, income: 0, lost: {}, killed: 0, bLost: 0, bKilled: 0, alertAt: -99 };
+    return { i, id: p.id, ti, faction: p.faction, income: 0, lost: {}, used: {}, killed: 0, bLost: 0, bKilled: 0, alertAt: -99 };
   });
   const NT = teams.length;
   const hostile = (a, b) => P[a].ti !== P[b].ti;
@@ -106,9 +108,23 @@ export function createSim(snap) {
     }
   });
 
+  // Bridges are decks on water cells: passable while they stand. Neutral buildings block the way but are never targets.
+  const brAt = new Int16Array(N).fill(-1);
+  const Brs = (snap.bridges || []).map((b, i) => {
+    const o = { id: b.id, i, x: b.x, y: b.y, w: b.w, h: b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2, cells: b.cells, a: b.a || 0, hp: b.hp, mhp: D.bridge.hp,
+      dead: !(b.hp > 0), isB: true, br: true, cls: 'bld', o: -1, t: 'bridge', hit: -99 };
+    for (const c of b.cells) { brAt[c] = i; if (!o.dead) blk[c] = 0; }
+    return o;
+  });
+  const pidx = new Map(snap.players.map((p, i) => [p.id, i]));
+  const Ns = (snap.neut || []).map((q, i) => {
+    for (let y = q.y; y < q.y + 2; y++) for (let x = q.x; x < q.x + 2; x++) blk[y * n + x] = 2;
+    return { id: q.id, i, t: q.t, d: D.neutral[q.t], x: q.x, y: q.y, w: 2, h: 2, cx: q.x + 1, cy: q.y + 1, o: pidx.has(q.o) ? pidx.get(q.o) : -1, cap: -99 };
+  });
+
   const cellOf = (x, y) => (y | 0) * n + (x | 0);
   const inb = (x, y) => x >= 0 && y >= 0 && x < n && y < n;
-  const isFreeMuster = (x, y) => inb(x, y) && blk[y * n + x] === 0 && !docks.has(y * n + x);
+  const isFreeMuster = (x, y) => inb(x, y) && blk[y * n + x] === 0 && brAt[y * n + x] < 0 && !docks.has(y * n + x);      // nobody musters on a bridge
 
   function mkUnit(pi, t, x, y) {
     const d = D.units[t];
@@ -126,7 +142,8 @@ export function createSim(snap) {
       if (!o.pts || !o.pts.length) return;
       const mem = units.filter((u, k) => gs[k] === oi); let spd = 99;
       for (const u of mem) if (!u.d.air) spd = Math.min(spd, u.d.speed);
-      for (const u of mem) { u.g = oi; u.mode = 'move'; u.pts = o.pts; u.wi = 0; if (!u.d.air) u.spd = spd; }
+      const sg = bridgeAt(Brs, o.pts[o.pts.length - 1]);      // a target on a standing bridge: the group is there to bring it down
+      for (const u of mem) { u.g = oi; u.mode = 'move'; u.pts = o.pts; u.wi = 0; u.sg = sg && !sg.dead ? sg : null; if (!u.d.air) u.spd = spd; }
     });
     // harvesters start at the refinery gates
     const refs = Bs.filter(b => b.o === pi && b.t === 'ref' && !b.off);
@@ -291,6 +308,20 @@ export function createSim(snap) {
   function hurt(src, t, amount) {
     if (t.dead || amount <= 0) return;
     t.hp -= amount; t.hit = tick;
+    if (t.br) {          // a bridge: when it falls the deck is water again, and whoever stands on it goes down with it
+      if (t.hp > 0) return;
+      t.dead = true; t.hp = 0; fieldVer++;
+      for (const c of t.cells) blk[c] = 1;
+      ev.push({ k: 'brd', i: t.i, o: src.o, x: t.cx, y: t.cy });
+      for (const u of Us) {
+        if (u.dead || u.d.air || brAt[cellOf(u.x, u.y)] !== t.i) continue;
+        u.dead = true; u.hp = 0; anyDead = true;
+        P[u.o].lost[u.t] = (P[u.o].lost[u.t] || 0) + 1;
+        if (u.mode === 'harv' && u.oc >= 0) claim[u.oc] = Math.max(0, claim[u.oc] - 1);
+        ev.push({ k: 'ud', o: u.o, t: u.t, x: u.x, y: u.y, c: u.cls, wet: 1 });
+      }
+      return;
+    }
     const time = tick * dt, tp = P[t.o];
     if ((t.isB || t.d.harv) && time - tp.alertAt > 12) { tp.alertAt = time; ev.push({ k: 'a', o: t.o, x: tx(t), y: ty(t), h: t.isB ? 0 : 1 }); }
     if (t.hp > 0) return;
@@ -334,13 +365,14 @@ export function createSim(snap) {
     e.mv = false; e.aim = false;
     if (e.mode === 'harv') return stepHarv(e);
     if (e.d.air) return stepAir(e);
+    if (!e.wp) return stepEng(e);
     const wp = e.wp; e.cd -= dt; if (e.ig > 0) { e.ig -= dt; if (e.ig <= 0) e.igT = null; }
     let t = e.tgt; if (t && t.dead) { t = e.tgt = null; e.fb = false; e.path = null; }
     const guard = e.mode === 'guard';
     if (!peace && (tick + e.id) % 4 === 0 && (!t || (!e.fb && (tick + e.id) % 12 === 0))) {
       const c = guard ? acquire(e, wp, D.guardRange, e.hx, e.hy) : acquire(e, wp, wp.range + 2.5, e.x, e.y);
       if (c && c !== t) { e.tgt = t = c; e.fb = false; e.path = null; }
-      else if (!c && t && !e.fb) { t = e.tgt = null; e.path = null; }
+      else if (!c && t && !e.fb && !t.br) { t = e.tgt = null; e.path = null; }
     }
     if (t) {
       const d = distTo(e, t), min = wp.minRange || 0;
@@ -360,14 +392,71 @@ export function createSim(snap) {
     }
     const ti = P[e.o].ti;
     if (e.mode === 'move') {
-      const p = e.pts[e.wi], F = pointField(ti, p[0], p[1]), c = cellOf(e.x, e.y);
-      if (F[c] <= 2.5 || F[c] >= 1e9) { e.wi++; if (e.wi >= e.pts.length) e.mode = 'hunt'; return; }
+      const p = e.pts[e.wi], F = pointField(ti, p[0], p[1]), c = cellOf(e.x, e.y), sg = e.sg && !e.sg.dead ? e.sg : null;
+      // on the way to a bridge that is to be brought down: stop as soon as it is in range, not on the deck
+      const there = sg && e.wi === e.pts.length - 1 && rectDist(e.x, e.y, sg) <= Math.max(1.2, wp.range - 0.5);
+      if (there || F[c] <= 2.5 || F[c] >= 1e9) { e.wi = there ? e.pts.length : e.wi + 1; if (e.wi >= e.pts.length) e.mode = sg ? 'siege' : 'hunt'; return; }
       followField(e, F, e.spd);
+      return;
+    }
+    if (e.mode === 'siege') {
+      if (e.sg.dead) e.mode = 'hunt';
+      else if (!peace && e.igT !== e.sg) { e.tgt = e.sg; e.fb = false; }      // from the next step the target code above walks into range and fires
       return;
     }
     // hunt: walk to the nearest enemy building, if one is reasonably near
     const F = huntField(ti), c = cellOf(e.x, e.y);
     if (F[c] < 34 && F[c] > 0.5) followField(e, F, e.spd);
+  }
+
+  // ---------- engineers and neutral buildings ----------
+  // An engineer follows his group and then walks into the nearest neutral building near the group's target
+  // that his team does not hold. He stays inside: the building changes hands and he is gone (not counted as a loss).
+  function stepEng(e) {
+    if (e.mode === 'guard') {
+      const dx = e.hx - e.x, dy = e.hy - e.y;
+      if (dx * dx + dy * dy > 0.2) pathTo(e, { x: e.hx, y: e.hy, w: 0, h: 0 }, 0.2, 900, 'home');
+      return;
+    }
+    const ti = P[e.o].ti;
+    if (e.mode === 'move') {
+      const p = e.pts[e.wi], F = pointField(ti, p[0], p[1]), c = cellOf(e.x, e.y);
+      if (F[c] <= 2.5 || F[c] >= 1e9) { e.wi++; if (e.wi >= e.pts.length) e.mode = 'cap'; return; }
+      followField(e, F, e.spd);
+      return;
+    }
+    let nb = e.nb;
+    if (!nb || (nb.o >= 0 && P[nb.o].ti === ti)) {
+      if ((tick + e.id) % 5 !== 0) return;
+      const p = e.pts[e.pts.length - 1]; let bs = D.capRange * D.capRange; nb = null;
+      for (const q of Ns) {
+        if (q.o >= 0 && P[q.o].ti === ti) continue;
+        const d2 = (q.cx - p[0] - 0.5) * (q.cx - p[0] - 0.5) + (q.cy - p[1] - 0.5) * (q.cy - p[1] - 0.5);
+        if (d2 <= bs) { bs = d2; nb = q; }
+      }
+      e.nb = nb; e.path = null;
+      if (!nb) return;
+    }
+    if (rectDist(e.x, e.y, nb) <= 0.75) {
+      nb.o = e.o; nb.cap = tick;
+      e.dead = true; anyDead = true; P[e.o].used[e.t] = (P[e.o].used[e.t] || 0) + 1;
+      ev.push({ k: 'cap', o: e.o, i: nb.i, t: nb.t, x: nb.cx, y: nb.cy });
+      return;
+    }
+    pathTo(e, nb, 0.6, 900, nb);
+  }
+  // A field workshop mends the units of its owner's team that are close by.
+  function workshops() {
+    for (const q of Ns) {
+      if (q.o < 0 || !q.d.heal) continue;
+      const ti = P[q.o].ti, r2 = q.d.range * q.d.range;
+      for (const u of Us) {
+        if (u.dead || u.d.air || u.hp >= u.mhp || P[u.o].ti !== ti) continue;
+        if ((u.x - q.cx) * (u.x - q.cx) + (u.y - q.cy) * (u.y - q.cy) > r2) continue;
+        u.hp = Math.min(u.mhp, u.hp + u.mhp * q.d.heal);
+        ev.push({ k: 'hl', x: u.x, y: u.y });
+      }
+    }
   }
 
   // ---------- aircraft ----------
@@ -399,6 +488,7 @@ export function createSim(snap) {
     if (e.wi < e.pts.length) { const p = e.pts[e.wi]; if (moveTo(e, p[0] + 0.5, p[1] + 0.5, d.speed)) e.wi++; return; }
     if (peace) { e.over = true; e.as = 1; return; }
     if ((tick + e.id) % 6 !== 0) return;
+    if (e.sg && !e.sg.dead && dmgMult(wp.w, 'bld') > 0) { e.tgt = e.sg; return; }      // sent to bring down a bridge
     // over the target area: go for the nearest enemy building around it, or call it a day
     const p = e.pts[e.pts.length - 1]; let best = null, bs = 26 * 26;
     if (dmgMult(wp.w, 'bld') > 0) for (const b of Bs) {
@@ -490,6 +580,7 @@ export function createSim(snap) {
     for (let t = 0; t < NT; t++) vis[t].fill(0);
     for (const b of Bs) if (!b.dead) stamp(vis[P[b.o].ti], n, b.cx, b.cy, b.d.sight + (b.w > 2 ? 1 : 0));
     for (const u of Us) if (!u.dead) stamp(vis[P[u.o].ti], n, u.x, u.y, u.d.sight);
+    for (const q of Ns) if (q.o >= 0) stamp(vis[P[q.o].ti], n, q.cx, q.cy, q.d.sight);
     for (let t = 0; t < NT; t++) { const v = vis[t], e = explored[t]; for (let c = 0; c < N; c++) if (v[c]) e[c] = 1; }
     for (const b of Bs) {
       if (b.dead) continue;
@@ -500,7 +591,7 @@ export function createSim(snap) {
   vision();
 
   const sim = {
-    n, Bs, Us, P, ore, blk, vis, explored, seen, teams, duration, peace,
+    n, Bs, Us, P, Brs, Ns, ore, blk, vis, explored, seen, teams, duration, peace,
     get ev() { return ev; }, get tick() { return tick; }, get time() { return tick * dt; },
     get done() { return tick * dt >= duration; },
     teamIndex: pi => P[pi].ti,
@@ -509,6 +600,7 @@ export function createSim(snap) {
       for (const b of Bs) if (!b.dead) stepBuilding(b);
       for (const u of Us) if (!u.dead) stepUnit(u);
       separate();
+      if (tick % 10 === 0) workshops();
       if (anyDead) { anyDead = false; for (let i = Us.length - 1; i >= 0; i--) if (Us[i].dead) Us.splice(i, 1); }
       if (tick % 5 === 0) vision();
     },
@@ -518,7 +610,9 @@ export function createSim(snap) {
       const hp = {}; for (const b of Bs) if (!b.dead) hp[b.id] = Math.max(1, Math.round(b.hp));
       return {
         hp, dead: deadB.slice(), ore: oreToStr(ore),
-        players: P.map(p => ({ id: p.id, income: p.income, lost: p.lost, killed: p.killed, bLost: p.bLost, bKilled: p.bKilled,
+        bridges: Brs.map(b => b.dead ? 0 : Math.max(1, Math.round(b.hp))),      // in the order of the snapshot
+        neut: Ns.map(q => q.o >= 0 ? P[q.o].id : 0),
+        players: P.map(p => ({ id: p.id, income: p.income, lost: p.lost, used: p.used, killed: p.killed, bLost: p.bLost, bKilled: p.bKilled,
           explored: packBits(explored[p.ti]), seen: [...seen[p.ti]] })),
       };
     },

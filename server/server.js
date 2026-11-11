@@ -149,9 +149,12 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 // Static files are revalidated on every load (ETag), so an update reaches everyone at once, and text is sent gzipped.
 const TEXT = new Set(['.html', '.js', '.css', '.svg', '.json', '.webmanifest']);
 const packed = new Map();   // file -> { tag, raw, gz }
+// The path of a request, without the query. (Not `new URL`: it throws on a path such as "//", and that stopped the server.)
+const pathOf = req => { const u = String(req.url || '/'), q = u.indexOf('?'); return q < 0 ? u : u.slice(0, q); };
 function serveStatic(req, res) {
   let p;
-  try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400).end(); return; }
+  try { p = decodeURIComponent(pathOf(req)); } catch { res.writeHead(400).end(); return; }
+  if (p.includes('\0')) { res.writeHead(400).end(); return; }
   if (p.endsWith('/')) p += 'index.html';
   const file = path.normalize(path.join(PUBLIC, p));
   if (!file.startsWith(PUBLIC + path.sep)) { res.writeHead(403).end(); return; }
@@ -201,9 +204,12 @@ function clientIp(req) {
   return fwd[fwd.length - 1];
 }
 
+// No request may stop the server: whatever goes wrong while answering one is logged and answered with an error.
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
-  const m = /\/api\/(\w+)$/.exec(url.pathname);
+  try { handle(req, res); } catch (e) { console.error(e); try { res.writeHead(500).end(); } catch {} }
+});
+function handle(req, res) {
+  const m = /\/api\/(\w+)$/.exec(pathOf(req));
   if (!m) return serveStatic(req, res);
   const op = Object.hasOwn(api, m[1]) ? api[m[1]] : null, ip = clientIp(req);
   const send = (code, obj) => {
@@ -224,7 +230,7 @@ const server = http.createServer((req, res) => {
       else { console.error(e); send(500, { error: 'Serverfejl.' }); }
     }
   });
-});
+}
 
 // Once a minute: deadlines also pass when nobody is looking, and matches nobody uses leave the memory
 // (a finished one after ten minutes, any other after six hours; they stay on disk).

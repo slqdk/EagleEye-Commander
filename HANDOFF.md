@@ -1,6 +1,6 @@
 # EagleEye Commander — handoff
 
-Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is v2.3.2). Read this first when continuing in a new chat.
+Status after the fourth session (v2.5.0 on branch `v2.5`, 11 Nov 2026; `main` is v2.4.0, and v2.4.1 waits in a pull request of its own). Read this first when continuing in a new chat.
 
 - The game is called **EagleEye Commander** since v2.3.2 (before: Jernfronten 2). Internal names were left alone on purpose: the `jf2-*` keys in `localStorage`, `window.JF`, `JF_OFFLINE`.
 - The code lives in **https://github.com/slqdk/EagleEye-Commander** (public, branch `main`). Søren's server pulls from `main` with `eagleeye-update`, so `main` must always be playable; larger work goes on a branch.
@@ -52,6 +52,20 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
 
 - **v2.4.1** The installer, and one fix in the client. `pct exec <id> -- eagleeye-update` failed on Søren's host with "Failed to exec": `pct exec` does not search `/usr/local/bin`. The command is now also linked into `/usr/bin`, the installer sets its own `PATH` and a locale that exists (`C.UTF-8`, no more perl warnings). The way that always works: `pct exec <id> -- bash /opt/eagleeye-commander/deploy/install.sh`. The client fix: opening an online match from the front page (or reloading the page) when a round had been resolved since the last visit threw an error in `renderSide()` (`st.ps` was still empty), so the battle never played and the view hung; reloading did not help. `applyView()` now works out the power state before the first playback. Present since 2.3.
 
+- **v2.5.0** Attacks the way the first version of the game (v66) had them, on the shared map. Søren, after playing 2.4: he would rather pick a camp on the radar and choose in a menu how many to send, with the rest defending at home; he wanted mines, walls and atom bombs back, bigger maps, and "as soon as you have a radar you can spy on enemies and attack them when you have found them". He had not played far enough to see that walls and home defence were already there.
+  - **Spying** (`act` `spy`, `DEFS.spyCost` 200, needs a radar station with power): writes all of the target's buildings except minefields into `p.known`, opens the shroud over them and stores `p.intel[targetId] = { round, army }`. The picture is as of that moment; spy again for a new one. Allies get it too. A radar station **no longer reveals** the command centres by itself (`revealHQs` is gone). A camp is *found* when the general knows at least one of its buildings (`campFound`): by a spy or by his own troops.
+  - **Camp orders**: an order may carry `camp: <general's id>` (and `nuke: true`). Humans may only name a found camp. `pts` still holds a point (the client puts the known position there, so flags and labels work as before); `buildSnapshot()` replaces the last point with where the command centre really stands. The order is dropped at the snapshot if the target has become an ally.
+  - **Client**: the sidebar's Angreb button opens one panel: the enemy generals (not found / found / spied n rounds ago with buildings and army, ☢ when a bomb is on the way; buttons Spionér, Angrib, Vis), then the planned attacks. Angrib makes a group for that camp with zero units and opens the count steppers (the v66 planner); one group per camp. Found camps have a marker on the radar (click it: the view jumps there and the panel opens at that camp) and a name banner on the map; an enemy building's info panel leads to its camp. Picking units on the map and pointing out a place is unchanged and makes an order without `camp`. Groups without units are dropped when the panel closes or Ready is pressed (`pruneOrders`), except a bomb on its own.
+  - **Minefields** (`DEFS.buildings.mine`, flag `mine`, 100, cap `mineCap` 10, within `mineGap` 5 of a base building): ordinary entries in `p.buildings`, but never in anybody's `known`, never a target, never in the way. In `sim.js` they live in `Ms`/`mAt`, apart from `Bs`; `stepMines()` sets one off under the first hostile ground unit in its cell (damage `boom` to hostile ground units within the splash, as in v66; nothing during the ceasefire). A hostile building placed on a hidden minefield clears it (`clearMines`), so a refused placement cannot be used to feel for them. `isBase(t)` in `defs.js` is the test for "a building that makes up the base" (not a wall, not a minefield); use it instead of `!wall`.
+  - **A-bomb** (`DEFS.buildings.silo`, 3,000, needs `tech`, `only: 'one'`; numbers in `DEFS.nuke`): `p.nukeAt` is the round from which the bomb can be used; it is set to round + 5 when the first silo is built and again after every use (v66's rule; a rebuilt silo does not restart it). `nukeState(p, round)` says built / on / ready. One order with a camp may carry it, units or not. In the simulation the rocket leaves at 1 s (event `nl`, with the aim point: the centre of the building with the most of the target's base within 4.5 cells) and lands at 5 s (event `nk`): everything hostile to the owner within 2.7 cells is destroyed, the rest out to 4.5 cells loses 80 % of full health; distances to buildings are to their footprint. The owner's side is not hit and sees the place for 20 seconds. `view().players[].atom` shows everybody the rounds left (0 = ready), as v66 showed who was preparing one.
+  - **Home defence**: a unit on guard used to react only to enemies within `guardRange` (11) of its own post. Now it also takes any enemy inside the home zone: within `homeRange` (6) of one of the base's buildings (`zones` in `sim.js`).
+  - **Map size** `giant` ("Enormt", sides x 2, 250 seconds): 120 cells for two generals, 176 for six. Six AI generals take 0.3-2.6 seconds a round on the build machine.
+  - **AI**: lays a couple of minefields a round on the side of the base that faces the middle, builds the silo after the airfield (it now also holds money back for the next building after round 9, or it would never afford one) and drops the bomb on the richest enemy camp as soon as it is ready. It does not spy; it knows where everybody is, as before.
+  - **Playback**: minefield blasts, the rocket leaving the silo, a reticle that closes on the target for the two sides involved (the owner's view jumps there), a mushroom cloud, a blinding flash and a shaking screen; a siren and a splash for everybody. The speed "Auto" stays slow while a bomb is in the air.
+  - New art: minefield (three plates in turned earth with a pennant; only its owner's side ever sees it) and rocket silo. Four new radio lines (`spy`, `nukeready`, `nukeout`, `nukein`).
+  - Things decided without asking back (Søren had said what he wanted; these are the forks): spying *finds* a camp, so the radar's free reveal went; the menu sits beside map picking instead of replacing it; the bomb spares its owner's side; a bomb may be sent without troops; the countdown is public.
+  - Fixed on the way: after laying walls (and now minefields) one after the other, the last one stayed "ready" in the sidebar and blocked the Ready button until it was cancelled by right-click.
+
 ## What was decided
 
 - Rebuild from scratch instead of extending v66. v66 was "own base + separate raids"; the 90s feel needs one shared battlefield.
@@ -63,14 +77,14 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
 
 ## How a round works
 
-1. Planning: build (sidebar picture → clock wipe → place near own buildings), train units, sell/repair, make up to 3 attack groups (units + route of up to 4 points; the last is the target).
+1. Planning: build (sidebar picture → clock wipe → place near own buildings), train units, sell/repair, spy, make up to 3 attacks: a found camp with a number of each kind of unit, or a group picked on the map with a route of up to 4 points (the last is the target).
 2. Ready: when every living human is ready, or the deadline passes, the server lets the AI generals act, then simulates 150 seconds on the whole map.
-3. In the simulation: groups follow their route and then hunt the nearest enemy buildings; units left at home guard the base; harvesters shuttle ore to the refineries (that is the income); defences fire.
+3. In the simulation: an A-bomb, if one was ordered, lands in the first seconds; groups follow their route and then hunt the nearest enemy buildings; units left at home guard the whole base; minefields go off under the first enemy; harvesters shuttle ore to the refineries (that is the income); defences fire.
 4. Afterwards: survivors are back home, buildings keep their damage, ore regrows a little, everyone watches the playback (auto speed: fast when quiet, slow when fighting) and gets a report.
 - Ceasefire in the first rounds (default 2): nobody can shoot, but groups can scout.
 - Power as in v66: the newest buildings switch off first.
-- Radar station: turns on the minimap and reveals enemy command centres.
-- Lose all non-wall buildings and you are out. Losing buildings pays 35 % rebuilding aid; every round pays 300 supply.
+- Radar station: turns on the minimap and makes spying possible. Since 2.5 it reveals nothing by itself.
+- Lose every building that is not a wall or a minefield and you are out. Losing buildings pays 35 % rebuilding aid; every round pays 300 supply.
 
 ## Architecture in one paragraph
 
@@ -81,14 +95,15 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
 - Headless AI matches (2–6 players): deterministic, 60–1200 ms per round, matches last roughly 10–30 rounds.
 - Browser: offline skirmish through many rounds for both factions, placement, walls, sell, repair, train/undo, orders, playback, report, victory screen; box selection, click-to-order and both aircraft types on a 1920 px screen.
 - Server: create, join by invite link on a phone-sized screen, lobby, start, both ready, round resolves for both.
+- v2.5.0: rule checks for spying, camp orders, minefields, the bomb, home defence and matches saved by 2.4 (75 checks, run headless); AI matches on every map and size; a skirmish walked through by a scripted browser on a desktop and a phone-sized touch screen (radar, spy, camp found, count menu, radar marker, minefields from the build menu, silo, bomb, playback, report); an online match with two browsers through the round where the bomb falls, seen from the owner and from the target, with a check that neither view holds the other's minefields.
 - v2.3.0: every sprite in both palettes, both detail levels and all damage levels (gallery page); the settings panel on desktop and phone size; every graphics setting flipped while planning and during a battle without errors; left-drag modes, edge scrolling, start speed; staged battles for both factions (1× and 2× pixel density).
 
 ## Known gaps and ideas, roughly in priority order
 
 0. **No match with real people has been played yet.** The server itself runs for real since 11 Nov 2026 (Proxmox LXC behind Nginx Proxy Manager, installed with `deploy/install.sh`); `proxmox-lxc.sh` and the Dockerfile have still not been run. Not confirmed: that the server sees the visitors' own addresses through the proxy (`"you"` in `api/health`). Nothing tells a player that a round has been resolved or that the others are waiting (no mail, push or chat message), which matters most for "play in a busy week".
 1. **Balance is a first pass.** Only AI-vs-AI tested. Watch: early infantry rushes right after the ceasefire, Pagten's lightning tower, artillery.
-2. **Playback leaks hidden information.** The client receives the full pre-round snapshot (the shroud is applied when drawing). Fine among friends; fix by recording per-team keyframes on the server.
-3. Not ported from v66 yet: mines, the A-bomb, the shared fortress, PWA service worker.
+2. **Playback leaks hidden information.** The client receives the full pre-round snapshot (the shroud is applied when drawing). Since 2.5 that includes the enemy's minefields. Fine among friends; fix by recording per-team keyframes on the server.
+3. Not ported from v66 yet: the shared fortress, the choice of which side of a camp to attack from, PWA service worker. (Mines and the A-bomb came in 2.5.)
 4. Aircraft are a first version: no air-to-air combat, no transport, landed aircraft can only be hit by anti-air weapons, and aircraft in a mixed group fly ahead of the ground units.
 5. Walls are drawn as separate blocks (no joined corners). Vehicles do not show damage on the sprite itself (only smoke), and infantry is still a simple 2D figure.
 6. AI knows where every base is and always attacks the nearest; no difficulty levels.
@@ -97,11 +112,13 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
 8. Late joining after the match has started is not possible; a spectator link does not exist.
 9. New in 2.4 and only tried by the AI and by scripted browsers: bridge sieges, engineers, alliances, chat. Watch for: random maps where the way round a fallen bridge is very long (seen: 251 cells instead of 65), bridges that make a map lopsided, depots that pay too much (400 a round), alliances in a three-player match (two against one until one leaves). The AI never attacks a bridge and never allies.
 10. Chat and the front page are polled (4 and 20 seconds); nothing is pushed, and there is still no notice outside the page that it is your turn.
+11. New in 2.5 and only tried by the AI and by scripted browsers: spying, camp attacks, minefields, the A-bomb. Watch for: one bomb wiping out a small base (in the two-browser test a base of four buildings was gone, and its owner out, in one hit; 35 % rebuilding aid only helps those who survive), whether a public five-round countdown gives the others enough time, the price of spying (200 is hardly a decision), ten minefields against a ground attack. The picture of a spied camp is not marked as old on the map itself, only in the list.
+12. A battle is played back by re-running it with the current rules. The first playback after an update, of a round that the older version resolved, can therefore differ from the stored result (2.5 changed home defence). The result itself is not affected.
 
 ## Content backlog (from the "what is missing" talks; nothing here is decided)
 
 - Interface: mouse cursors that change over targets, control groups on Ctrl+1-9, a sidebar and menus that follow the palette, an end-of-match screen with graphs.
-- Units and buildings: an engineer who can also take enemy buildings, and a spy; a mobile construction yard for a second base; a superweapon with a countdown everyone sees (v66 had the A-bomb); navy (yard, ships, submarines; the maps already have water); transport, mine layer and paratroopers; a repair depot and silos; bonus crates on the map.
+- Units and buildings: an engineer who can also take enemy buildings; a mobile construction yard for a second base; navy (yard, ships, submarines; the maps already have water); transport and paratroopers; a repair depot and silos; bonus crates on the map; something that finds or clears minefields. (Done in 2.5: spying, minefields, the A-bomb with a countdown everyone sees.)
 - Match setup: tech level in the lobby, a campaign with briefings (large, and a poor fit for a friend group). (Done in 2.4: maps, landscapes, start money, bridges, neutral buildings, alliances, chat.)
 - Orders: more than "go there and hunt": hold a spot, escort, pick a kind of target, leave later than the other groups. Probably the cheapest way to add skill to a game without unit control.
 - Look: joined walls and gates, damage on vehicle sprites, infantry that aims and falls, craters and wrecks that stay between rounds.

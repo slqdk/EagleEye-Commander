@@ -574,7 +574,7 @@ function renderOrders() {
   let h = `<h3>Angreb<button class="btn small" id="orX">Luk</button></h3><div class="sec">Fjendens lejre</div>`;
   if (!radar && list.length) h += `<div class="hint">Med en radarstation kan du spionere dig frem til fjendens lejre og angribe dem herfra. Lejre, som dine tropper selv får øje på, kommer også på listen.</div>`;
   for (const p of list) {
-    const c = campOf(p.id), it = m.intel[p.id], gi = st.orders.findIndex(o => o.camp === p.id), age = it ? v.round - it.round : 0;
+    const c = campOf(p.id), it = (m.intel || {})[p.id], gi = st.orders.findIndex(o => o.camp === p.id), age = it ? v.round - it.round : 0;
     const army = it ? Object.entries(it.army).filter(([t]) => UD[t] && !UD[t].harv) : [], cnt = army.reduce((s, [, k]) => s + k, 0);
     const status = !c ? 'Ikke fundet endnu' : !it ? `Fundet: ${c.n} ${c.n === 1 ? 'bygning' : 'bygninger'} set`
       : `Spioneret ${age ? 'for ' + age + (age === 1 ? ' runde' : ' runder') + ' siden' : 'i denne runde'}: ${c.n} ${c.n === 1 ? 'bygning' : 'bygninger'}, ${cnt ? cnt + (cnt === 1 ? ' enhed' : ' enheder') : 'ingen hær'}`;

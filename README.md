@@ -122,7 +122,7 @@ docker run -d --name eagleeye --restart unless-stopped -p 8080:8080 -v eagleeye-
 
 ### How far the installation has been tested
 
-`install.sh` has been run from start to finish in a plain Ubuntu 24.04 container where a stand-in played systemd's part. On a real Proxmox host neither `install.sh`, `proxmox-lxc.sh` nor the `Dockerfile` has been run yet. This note goes away when they have.
+The one-line install, fetched from GitHub, has been run from start to finish in clean Debian 12 and Debian 13 systems (Node 24 from NodeSource and Debian's own Node 20), including an update and an update blocked by a local edit. A stand-in played systemd's part there; the unit file itself passes `systemd-analyze verify`. Not run yet: the service under real systemd in an LXC, `proxmox-lxc.sh` and the `Dockerfile`.
 
 ## Sound
 

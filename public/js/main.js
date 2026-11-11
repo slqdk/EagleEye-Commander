@@ -141,7 +141,7 @@ function wireChat(keep) {
 const chatKeep = () => $('#chatIn') ? { val: $('#chatIn').value, foc: document.activeElement === $('#chatIn'), to: $('#chatTo') ? $('#chatTo').value : '' } : null;
 function chatBadge() {
   const v = st.v, el = $('#chatN'); if (!v || !v.me) return;
-  const seen = +(LS.get(chatKey()) || 0), n = v.chat.filter(m => m.id > seen && m.from !== v.me.id).length;
+  const seen = +(LS.get(chatKey()) || 0), n = v.chat.filter(m => m.id > seen && m.from !== v.me.id && (m.from || m.team)).length;      // what people wrote, and offers made to me
   el.hidden = !n; el.textContent = n > 9 ? '9+' : n;
 }
 
@@ -185,7 +185,7 @@ function renderLobby() {
     else doAct(el.dataset.k === 'f' ? { a: 'botSet', id, f: el.value } : { a: 'botSet', id, team: +el.value });
   };
   C.onclick = e => {
-    const b = e.target.closest('button'); if (!b || b.type === 'submit') return; unlock();
+    const b = e.target.closest('button'); if (!b || b.closest('#chatForm')) return; unlock();
     if (b.id === 'lbCopy') { navigator.clipboard?.writeText(url); toast('Link kopieret'); }
     else if (b.id === 'lbBot') doAct({ a: 'addBot' });
     else if (b.id === 'lbSeed') doAct({ a: 'reseed' });
@@ -231,9 +231,10 @@ function applyView(v, first) {
   const prev = st.v; st.v = v; st.skew = v.now ? v.now - Date.now() / 1000 : 0;
   if (v.phase === 'lobby') { st.mode = 'lobby'; show('lobby'); renderLobby(); return; }
   show('game'); R.resize(); R.setMap(v.map, v.opts.theme);
+  if ($('#lobbyCard').firstChild) $('#lobbyCard').innerHTML = '';      // its chat box must not live on beside the one in the match
   $('#btnChat').hidden = st.be.kind !== 'remote' || !v.me;
   if (st.be.kind === 'remote' && v.me) {      // a word about new messages, and the open panel follows along
-    const last = prev && prev.chat && prev.chat.length ? prev.chat[prev.chat.length - 1].id : first ? 1e9 : 0, fresh = v.chat.filter(m => m.id > last && m.from !== v.me.id);
+    const last = prev && prev.chat && prev.chat.length ? prev.chat[prev.chat.length - 1].id : first ? 1e9 : 0, fresh = v.chat.filter(m => m.id > last && m.from !== v.me.id && (m.from || m.team));
     if (st.comm && !$('#modal').hidden) showComm();
     else { chatBadge(); if (fresh.length) { const m = fresh[fresh.length - 1], p = v.players.find(q => q.id === m.from); toast((p ? p.name + ': ' : '') + m.text); } }
   }
@@ -681,7 +682,7 @@ function planOverlay(g, X, Y, Z, dpr) {
   // selected building
   const b = st.sel != null && st.scene.buildings.find(q => q.id === st.sel);
   if (b) {
-    const d = BD[b.t], x0 = X(b.x) - 3 * dpr, y0 = Y(b.y) - 3 * dpr, x1 = X(b.x + d.w) + 3 * dpr, y1 = Y(b.y + d.h) + 3 * dpr, L = 10 * dpr;
+    const d = BN[b.t], x0 = X(b.x) - 3 * dpr, y0 = Y(b.y) - 3 * dpr, x1 = X(b.x + d.w) + 3 * dpr, y1 = Y(b.y + d.h) + 3 * dpr, L = 10 * dpr;
     for (const [w, c] of [[6, OUT], [3, '#fff']]) { g.lineWidth = w * dpr; g.strokeStyle = c; g.beginPath(); for (const [x, y, sx, sy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]]) { g.moveTo(x + sx * L, y); g.lineTo(x, y); g.lineTo(x, y + sy * L); } g.stroke(); }
     if (d.weapon) ring(b.x + d.w / 2, b.y + d.h / 2, d.weapon.range);
   }

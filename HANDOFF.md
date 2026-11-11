@@ -50,6 +50,8 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
   - The AI now and then pays to rebuild a fallen bridge (it still never brings one down).
   - **2.3.3** (also merged into 2.4): a request for a path beginning with `//` made `new URL` throw and stopped the server. The path is now read from the request line, and a failing request is answered with an error instead of ending the process.
 
+- **v2.4.1** Installer only. `pct exec <id> -- eagleeye-update` failed on Søren's host with "Failed to exec": `pct exec` does not search `/usr/local/bin`. The command is now also linked into `/usr/bin`, the installer sets its own `PATH` and a locale that exists (`C.UTF-8`, no more perl warnings). The way that always works: `pct exec <id> -- bash /opt/eagleeye-commander/deploy/install.sh`.
+
 ## What was decided
 
 - Rebuild from scratch instead of extending v66. v66 was "own base + separate raids"; the 90s feel needs one shared battlefield.

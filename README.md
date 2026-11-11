@@ -67,6 +67,8 @@ systemctl status eagleeye-commander      # is it running?
 journalctl -u eagleeye-commander -f      # the log
 ```
 
+From the shell of the Proxmox host the same is `pct exec 120 -- eagleeye-update` (120 being the container's number). An installation made before 2.4.1 does not have the command where `pct exec` looks; update it once with `pct exec 120 -- bash /opt/eagleeye-commander/deploy/install.sh`, and the short form works from then on.
+
 Back up `/var/lib/eagleeye-commander`, or simply include the container in Proxmox's backup job.
 
 ### Behind a reverse proxy (Nginx Proxy Manager)
@@ -124,7 +126,7 @@ docker run -d --name eagleeye --restart unless-stopped -p 8080:8080 -v eagleeye-
 
 The one-line install runs on a real Proxmox host: an unprivileged Debian container behind Nginx Proxy Manager with HTTPS (11 Nov 2026). Before that it was run in clean Debian 12 and Debian 13 systems (Node 24 from NodeSource and Debian's own Node 20), including an update and an update blocked by a local edit. Not run yet: `proxmox-lxc.sh` (the script that also makes the container) and the `Dockerfile`.
 
-The `perl: warning: Setting locale failed` lines that a fresh container prints during the install are harmless.
+The first real run also showed that `pct exec` does not search `/usr/local/bin`; since 2.4.1 the update command is linked into `/usr/bin` as well, and the installer no longer prints locale warnings.
 
 ## Matches
 

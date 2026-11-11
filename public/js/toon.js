@@ -554,7 +554,13 @@ function pal(f, ci) {
 
 // ---------- small things used on many models ----------
 const M = {};
-const pad = (k, c, w, h) => k.box(0, 0, 0, w - 0.12, h - 0.12, 0.07, c.conc, { ol: 0.8, bias: -5, sh: false });
+// The ground a building stands on. Every building has its own outline, so a base is not a row of squares.
+const slab = (k, c, pts, col = c.conc) => k.fr(pts, 0, pts, 0.07, col, { ol: 0.8, bias: -5, sh: false });
+// a rectangle w x h around (cx, cy) with its corners cut off by ch
+const oct = (w, h, ch, cx = 0, cy = 0) => { const x = w / 2, y = h / 2; return [[-x + ch, -y], [x - ch, -y], [x, -y + ch], [x, y - ch], [x - ch, y], [-x + ch, y], [-x, y - ch], [-x, -y + ch]].map(([a, b]) => [a + cx, b + cy]); };
+const shrink = (pts, f, cx, cy) => pts.map(([x, y]) => [cx + (x - cx) * f, cy + (y - cy) * f]);
+// walls on any outline with a lid in the team colour
+const block = (k, c, pts, z0, h, col, cx, cy, lid = c.T, grow = 1.03) => { k.fr(pts, z0, pts, z0 + h, col); const top = shrink(pts, grow, cx, cy); k.fr(top, z0 + h, top, z0 + h + 0.08, lid); };
 const win = (k, c, x, y, z, w = 0.2, h = 0.2) => {
   k.box(x, y, z, w, 0.03, h, c.glass, { ol: 0.45, glow: true, bias: 0.3 });
   if (k.hi) k.box(x, y + 0.012, z - 0.035, w + 0.07, 0.05, 0.03, c.trim, { ol: 0.3, bias: 0.35, sh: false });
@@ -587,14 +593,15 @@ const dish = (k, c, x, y, z, r = 0.13) => { k.cyl(x, y, 0.03, z, r * 0.7, c.meta
 // ---------- building models (origin = centre of the footprint) ----------
 M.hq = (k, c, f, frame = 0) => {
   const hi = k.hi, P = f === 'P';
-  pad(k, c, 3, 3);
-  k.box(-0.4, -0.45, 0.07, 1.9, 1.7, 0.9, c.wall);                         // main block
-  k.box(-0.4, -0.45, 0.97, 1.74, 1.54, 0.1, c.T);
+  slab(k, c, oct(2.88, 2.88, 0.6));
+  const main = [[-1.35, -0.8], [-0.85, -1.3], [0.05, -1.3], [0.55, -0.8], [0.55, 0.4], [-1.35, 0.4]];      // main block, its two back corners cut off
+  k.fr(main, 0.07, main, 0.97, c.wall);
+  { const lid = shrink(main, 0.92, -0.4, -0.45); k.fr(lid, 0.97, lid, 1.07, c.T); }
   k.box(-0.6, -0.6, 1.07, 0.8, 0.7, 0.2, c.wall2);                         // roof house with the radome
   k.dome(-0.6, -0.6, 0.2, 1.27, c.white, { sq: 0.8 });
   for (const x of [-1.15, -0.82]) win(k, c, x, 0.41, 0.4, 0.22, 0.24);
-  k.box(0.35, 0.82, 0.07, 1.5, 1.0, 0.52, c.wall2);                        // garage
-  k.box(0.35, 0.82, 0.59, 1.54, 1.04, 0.07, c.roof);
+  k.box(0.35, 0.82, 0.07, 1.5, 1.0, 0.4, c.wall2);                         // garage under a barrel roof
+  k.arch([0.35, 0.3, 0.47], [0.35, 1.34, 0.47], 0.77, c.roof, { sq: 0.42 });
   door(k, c, 0.35, 1.33, 0.09, 0.9, 0.36);
   sign(k, c, 0.35, 1.34, 0.45, 1.04, 0.08, c.gold, 'hazard');
   k.box(1.05, -0.95, 0.07, 0.34, 0.34, 0.22, c.dark);                      // crane
@@ -620,7 +627,7 @@ M.hq = (k, c, f, frame = 0) => {
   else for (const [r, z, col] of [[0.27, 1.07, c.white], [0.19, 1.076, c.Td], [0.08, 1.082, c.white]]) k.cyl(0.1, -0.8, r, z, 0.006, col, { ol: 0, n: 16, sh: false, mat: null });
   win(k, c, -0.25, 1.33, 0.28, 0.16, 0.16); win(k, c, 0.95, 1.33, 0.28, 0.16, 0.16);
   k.box(0.35, 1.36, 0.56, 0.14, 0.05, 0.04, c.lamp, { ol: 0.3, glow: true, bias: 0.5 });
-  vent(k, c, 0.9, 0.62, 0.66); k.box(0.1, 0.8, 0.66, 0.42, 0.3, 0.02, c.glass, { glow: true, ol: 0.4 });
+  vent(k, c, 0.9, 0.62, 0.66); k.box(0.35, 0.8, 0.79, 0.36, 0.3, 0.02, c.glass, { glow: true, ol: 0.4 });
   k.box(1.05, -0.82, 1.56, 0.2, 0.14, 0.2, c.wall, { ol: 0.6, mat: null }); k.box(1.05, -0.745, 1.62, 0.14, 0.02, 0.09, c.glass, { glow: true, ol: 0.3, bias: 0.3 });   // crane cab
   k.rod([1.05, -0.95, 1.95], [1.05, -0.95, 2.24], 0.05, 0.05, c.crane, { ol: 0.6, mat: null });
   k.rod([1.05, -0.95, 2.22], [1.05 + ca * 0.9, -0.95 + sa * 0.9, 1.97], 0.02, 0.02, c.dark, { ol: 0.3, sh: false });
@@ -631,7 +638,7 @@ M.hq = (k, c, f, frame = 0) => {
 
 M.pow = (k, c, f) => {
   const hi = k.hi, P = f === 'P';
-  pad(k, c, 2, 2);
+  slab(k, c, P ? k.ngon(0.05, 0.02, 1.0, 10, Math.PI / 10) : oct(1.88, 1.88, 0.5));
   if (P) {
     k.stack(0.28, -0.2, [[0.56, 0.07], [0.47, 0.36], [0.42, 0.62], [0.4, 0.9], [0.43, 1.08], [0.47, 1.2]], c.conc);     // cooling tower
     k.cyl(0.28, -0.2, 0.48, 1.2, 0.06, c.Td, { ol: 0.7 });
@@ -647,8 +654,8 @@ M.pow = (k, c, f) => {
       k.stack(0.78, 0.56, [[0.17, 0.07], [0.1, 0.19], [0.005, 0.24]], c.coal, { n: 7, smooth: false, ol: 0.7 });
     }
   } else {
-    k.box(-0.3, 0.2, 0.07, 1.1, 1.1, 0.6, c.wall);
-    k.box(-0.3, 0.2, 0.67, 1.14, 1.14, 0.08, c.T);
+    k.box(-0.3, 0.2, 0.07, 1.1, 1.1, 0.48, c.wall);                         // turbine hall under a barrel roof
+    k.arch([-0.87, 0.2, 0.55], [0.27, 0.2, 0.55], 0.57, c.T, { sq: 0.45 });
     for (const y of [-0.5, 0.2]) {
       k.cyl(0.6, y, 0.2, 0.07, 1.25, c.wall2, { r2: 0.15, mat: 'metal' });
       k.cyl(0.6, y, 0.17, 1.05, 0.12, c.T, { ol: 0, r2: 0.165, sh: false });
@@ -670,7 +677,8 @@ M.pow = (k, c, f) => {
 
 M.ref = (k, c, f, frame) => {
   const hi = k.hi;
-  pad(k, c, 3, 3);
+  for (const [x, y] of [[-0.95, -0.85], [-0.05, -0.95]]) k.cyl(x, y, 0.52, 0, 0.07, c.conc, { ol: 0.8, bias: -5, sh: false, n: 10 });
+  slab(k, c, oct(1.3, 1.7, 0.3, 0.86, -0.55)); slab(k, c, [[-0.8, 0.26], [0.8, 0.26], [1.02, 1.44], [-1.02, 1.44]]);
   for (const [x, y] of [[-0.95, -0.85], [-0.05, -0.95]]) { k.cyl(x, y, 0.4, 0.07, 0.9, c.metal); k.dome(x, y, 0.4, 0.97, c.T, { sq: 0.55 }); }
   k.box(0.9, -0.55, 0.07, 1.0, 1.4, 0.8, c.wall);
   k.box(0.9, -0.55, 0.87, 1.04, 1.44, 0.08, c.roof);
@@ -701,10 +709,10 @@ M.ref = (k, c, f, frame) => {
 
 M.bar = (k, c, f) => {
   const hi = k.hi;
-  pad(k, c, 2, 2);
+  slab(k, c, oct(1.9, 1.9, 0.55), c.sand);
   if (f === 'P') {
-    k.box(-0.2, -0.1, 0.07, 1.25, 1.2, 0.52, c.wall);
-    k.box(-0.2, -0.1, 0.59, 1.3, 1.25, 0.08, c.T);
+    k.box(-0.2, -0.1, 0.07, 1.25, 1.2, 0.4, c.wall);
+    k.arch([-0.2, -0.72, 0.47], [-0.2, 0.52, 0.47], 0.65, c.T, { sq: 0.55 });
     k.box(0.62, -0.45, 0.07, 0.46, 0.46, 1.0, c.wall2);                    // watch tower
     k.fr(k.ngon(0.62, -0.45, 0.4, 4, Math.PI / 4), 1.07, k.ngon(0.62, -0.45, 0.02, 4, Math.PI / 4), 1.4, c.T);
     win(k, c, 0.62, -0.21, 0.75, 0.2, 0.16);
@@ -737,7 +745,7 @@ M.bar = (k, c, f) => {
 
 M.fac = (k, c) => {
   const hi = k.hi;
-  pad(k, c, 3, 3);
+  slab(k, c, [[-1.44, -1.44], [1.44, -1.44], [1.44, 0.85], [0.9, 1.44], [-0.9, 1.44], [-1.44, 0.85]]);
   k.box(0, -0.25, 0.07, 2.6, 2.1, 0.95, c.wall);
   for (let i = 0; i < 3; i++) {     // saw-tooth roof: team-coloured slopes, lit glazing towards the south
     const y0 = -1.3 + i * 0.7, y1 = y0 + 0.7;
@@ -761,10 +769,9 @@ M.fac = (k, c) => {
 
 M.rad = (k, c, f, frame) => {
   const hi = k.hi;
-  pad(k, c, 2, 2);
-  k.box(0, 0.1, 0.07, 1.4, 1.2, 0.5, c.wall);
-  k.box(0, 0.1, 0.57, 1.44, 1.24, 0.08, c.T);
-  win(k, c, -0.4, 0.71, 0.22, 0.24, 0.18); win(k, c, 0.4, 0.71, 0.22, 0.24, 0.18);
+  slab(k, c, k.ngon(0, 0.06, 0.98, 12, Math.PI / 12));
+  block(k, c, oct(1.4, 1.2, 0.34, 0, 0.1), 0.07, 0.5, c.wall, 0, 0.1);
+  win(k, c, -0.24, 0.71, 0.22, 0.18, 0.18); win(k, c, 0.24, 0.71, 0.22, 0.18, 0.18);
   door(k, c, 0, 0.71, 0.09, 0.22, 0.3);
   k.cyl(0.25, -0.05, 0.16, 0.65, 0.5, c.metal, { n: 8 });
   // the turning aerial: three mesh panels in a shallow arc
@@ -786,16 +793,15 @@ M.rad = (k, c, f, frame) => {
 
 M.tech = (k, c, f) => {
   const hi = k.hi, P = f === 'P';
-  pad(k, c, 3, 2);
-  k.box(0, 0, 0.07, 2.6, 1.6, 0.6, c.wall);
-  k.box(0, 0, 0.67, 2.64, 1.64, 0.08, c.T);
+  slab(k, c, oct(2.88, 1.88, 0.5));
+  block(k, c, [[1.3, 0.8], [1.3, -0.8], [-0.5, -0.8], [-0.97, -0.6], [-1.27, -0.22], [-1.27, 0.22], [-0.97, 0.6], [-0.5, 0.8]], 0.07, 0.6, c.wall, 0, 0);      // the west end is round, under the dome
   k.cyl(-0.55, -0.1, 0.55, 0.75, 0.1, c.wall2, { mat: null });
   k.dome(-0.55, -0.1, 0.5, 0.85, c.glass, { glow: true });
   k.box(0.75, -0.15, 0.75, 0.8, 0.9, 0.35, c.wall2);
   k.box(0.75, 0.31, 0.83, 0.5, 0.03, 0.16, P ? c.fire : c.zap, { glow: true, ol: 0.45, bias: 0.3, mat: null });
   k.rod([1.05, -0.45, 1.1], [1.05, -0.45, 1.75], 0.05, 0.05, c.metal, { ol: 0.6, mat: null });
   k.rod([0.85, -0.45, 1.6], [1.25, -0.45, 1.6], 0.04, 0.04, c.metal, { ol: 0.5, mat: null });
-  for (const x of [-0.9, -0.45, 0.45, 0.9]) win(k, c, x, 0.81, 0.26, 0.24, 0.2);
+  for (const x of [-0.33, 0.45, 0.9]) win(k, c, x, 0.81, 0.26, 0.22, 0.2);
   door(k, c, 0, 0.81, 0.09, 0.3, 0.36);
   if (!hi) return;
   k.box(0.75, -0.15, 1.1, 0.84, 0.94, 0.04, c.Td, { ol: 0.5 });
@@ -866,11 +872,11 @@ M.coil = (k, c, f, frame) => {
 
 M.air = (k, c) => {
   const hi = k.hi;
-  k.box(0, 0, 0, 2.9, 1.9, 0.05, c.asph, { ol: 0.8, bias: -5, sh: false });
+  { const apron = oct(2.9, 1.9, 0.42); k.fr(apron, 0, apron, 0.05, c.asph, { ol: 0.8, bias: -5, sh: false }); }
   for (const [x, y] of [[-0.7, -0.38], [0.7, -0.38], [-0.7, 0.42], [0.7, 0.42]]) { k.cyl(x, y, 0.33, 0.05, 0.006, c.gold, { ol: 0, bias: -4, sh: false, n: 16 }); k.cyl(x, y, 0.26, 0.056, 0.006, c.asph, { ol: 0, bias: -3.9, sh: false, n: 16, mat: null }); }
-  k.box(0, -0.78, 0.05, 0.3, 0.26, 0.7, c.wall);                           // control tower
-  k.box(0, -0.78, 0.75, 0.44, 0.36, 0.2, c.glass, { glow: true });
-  k.box(0, -0.78, 0.95, 0.5, 0.42, 0.06, c.T);
+  k.cyl(0, -0.76, 0.17, 0.05, 0.7, c.wall, { n: 6, smooth: false });       // six-sided control tower
+  k.cyl(0, -0.76, 0.27, 0.75, 0.2, c.glass, { n: 6, glow: true, smooth: false, r2: 0.3 });
+  k.cyl(0, -0.76, 0.33, 0.95, 0.06, c.T, { n: 6, smooth: false });
   k.rod([0, -0.78, 1.01], [0, -0.78, 1.3], 0.03, 0.03, c.dark, { ol: 0.5 });
   k.rod([1.32, 0.82, 0.05], [1.32, 0.82, 0.6], 0.04, 0.04, c.dark, { ol: 0.5 });   // windsock
   k.tube([1.3, 0.82, 0.56], [1.02, 0.82, 0.5], 0.055, c.fire, { ol: 0.6, r2: 0.03, n: 6 });

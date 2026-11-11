@@ -1,10 +1,10 @@
 // Plays whole AI-only matches headless and prints what happened. Run: npm test
-//   node tools/selftest.mjs <bots> <rounds> <seed> <map: random|kors|grav|pas>
+//   node tools/selftest.mjs <bots> <rounds> <seed> <map: random|kors|grav|pas> <size: normal|large|huge>
 import { newGame, addBot, startGame, resolveRound, buildSnapshot, powerState } from '../public/shared/engine.js';
 import { createSim } from '../public/shared/sim.js';
 
-const bots = +process.argv[2] || 4, rounds = +process.argv[3] || 25, seed = +process.argv[4] || 12345, kind = process.argv[5] || 'random';
-const g = newGame({ name: 'Selvtest', seed, roundHours: 0, map: kind });
+const bots = +process.argv[2] || 4, rounds = +process.argv[3] || 25, seed = +process.argv[4] || 12345, kind = process.argv[5] || 'random', size = process.argv[6] || 'normal';
+const g = newGame({ name: 'Selvtest', seed, roundHours: 0, map: kind, size });
 for (let i = 0; i < bots; i++) addBot(g);
 g.players[0].kind = 'human';   // keeps the match going until a real winner is found
 g.players[0].kind = 'ai';

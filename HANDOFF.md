@@ -45,6 +45,10 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
   - **Server**: an index of all matches (front page, deadlines) and a cache of the ones in use; a finished match leaves the memory after ten minutes, any other after six hours. API answers are gzipped. At most 20 new matches per address per hour. `upgrade()` in `engine.js` gives older saved matches the new fields.
   - **Buildings have their own outlines** (Søren, after seeing the live game: "they are all square"): no more square slab filling the footprint. Cut and round slabs, barrel roofs (`Kit.arch`), an eight-sided radar house, a round-ended tech centre, a six-sided control tower; helpers `slab`, `oct`, `block` in `toon.js`.
   - New sprites: bridge decks (drawn by `render.js` along the road), depot, lookout tower, field workshop, engineer (hard hat and toolbox, three voice lines each way).
+  - **Soldiers redrawn** (Søren: "identical dolls, make them more military and easier to tell apart"): the uniform is the faction's field cloth with the team colour on shoulders, sleeves and a helmet band; the helmet sits low over a shadowed face; packs, webbing and pouches. Each kind has its own outline: rifle, launcher on the shoulder with spare rockets in the pack, raised stick grenade and field cap, fuel tanks with gas mask and pilot flame, hard hat with spanner and toolbox. `galleri.html?only=i` shows them large.
+  - **Map size** (Søren: "aren't the maps small for a long match?"): `opts.size` = `normal`, `large` (sides x 1.3) or `huge` (x 1.6), in the lobby and in the skirmish form. Larger maps get extra ore fields, and the battle lasts 150 / 180 / 210 seconds (`DEFS.sizes`), because a rifleman walks one cell a second and everybody goes home after each battle. Six AI generals on a huge map take about a second a round to resolve on the build machine (two at worst).
+  - The AI now and then pays to rebuild a fallen bridge (it still never brings one down).
+  - **2.3.3** (also merged into 2.4): a request for a path beginning with `//` made `new URL` throw and stopped the server. The path is now read from the request line, and a failing request is answered with an error instead of ending the process.
 
 ## What was decided
 
@@ -89,7 +93,7 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
 7. Music and voices have not been heard by anyone yet (see v2.2.0): expect to adjust the mix, the radio effect or single lines. The new volume sliders make that easy to try.
    The graphics were only looked at as screenshots from a headless browser: speed on a real phone at high detail is untested (low detail and "Skarphed: Normal" are the fallbacks).
 8. Late joining after the match has started is not possible; a spectator link does not exist.
-9. New in 2.4 and only tried by the AI and by scripted browsers: bridge sieges, engineers, alliances, chat. Watch for: bridges that make a map lopsided, depots that pay too much (400 a round), alliances in a three-player match (two against one until one leaves). The AI neither attacks nor rebuilds bridges and never allies.
+9. New in 2.4 and only tried by the AI and by scripted browsers: bridge sieges, engineers, alliances, chat. Watch for: random maps where the way round a fallen bridge is very long (seen: 251 cells instead of 65), bridges that make a map lopsided, depots that pay too much (400 a round), alliances in a three-player match (two against one until one leaves). The AI never attacks a bridge and never allies.
 10. Chat and the front page are polled (4 and 20 seconds); nothing is pushed, and there is still no notice outside the page that it is your turn.
 
 ## Content backlog (from the "what is missing" talks; nothing here is decided)

@@ -28,6 +28,8 @@ export const DEFS = {
     shop:  { name: 'Feltværksted', w: 2, h: 2, sight: 4, heal: 0.04, range: 5, desc: 'Reparerer og plejer ejerens og de allieredes enheder i nærheden under slaget.' },
   },
   maps: { random: 'Tilfældigt', kors: 'Korsvejen', grav: 'Voldgraven', pas: 'Bjergpasset' },
+  // Map size: how much longer each side is, and how long a battle lasts (the slow units must be able to get there).
+  sizes: { normal: { name: 'Normalt', k: 1, seconds: 150 }, large: { name: 'Stort', k: 1.3, seconds: 180 }, huge: { name: 'Kæmpe', k: 1.6, seconds: 210 } },
   themes: { grass: 'Grønt', snow: 'Sne', desert: 'Ørken' },
   diplo: { fixed: 'Faste hold', notice: 'Pagter med varsel', free: 'Pagter uden varsel' },
 

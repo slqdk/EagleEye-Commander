@@ -25,10 +25,12 @@ export const MAP_KINDS = ['random', 'kors', 'grav', 'pas'];
 //   kors  crossroads: open country, a road from every base to the middle and a ring road between the neighbours
 //   grav  the moat: a river in a ring around the middle, a bridge on every base's road and a ford between neighbours
 //   pas   mountain pass: ridges between neighbours with one pass each, all valleys meet in the middle
-export function generateMap(seed, k, kind = 'random') {
-  const fixed = kind === 'kors' || kind === 'grav' || kind === 'pas';
-  if (fixed) seed = hashStr('kort:' + kind + ':' + k);
-  const n = sizeFor(k), N = n * n, R = mulberry32(seed);
+// size: 'normal', 'large' or 'huge' (sides 1.3 and 1.6 times as long, with more ore to match).
+export const SIZE_K = { normal: 1, large: 1.3, huge: 1.6 };
+export function generateMap(seed, k, kind = 'random', size = 'normal') {
+  const fixed = kind === 'kors' || kind === 'grav' || kind === 'pas', big = SIZE_K[size] || 1;
+  if (fixed) seed = hashStr('kort:' + kind + ':' + k + (big > 1 ? ':' + size : ''));
+  const n = 2 * Math.round(sizeFor(k) * big / 2), N = n * n, R = mulberry32(seed);
   const t = new Array(N).fill('.'), ore = new Uint8Array(N);
   const at = (x, y) => y * n + x, inb = (x, y) => x >= 0 && y >= 0 && x < n && y < n;
   const cx = n / 2, cy = n / 2, ring = n * 0.36, sector = Math.PI * 2 / k;
@@ -163,6 +165,9 @@ export function generateMap(seed, k, kind = 'random') {
     else if (kind === 'grav') { oreField(...polar(border, n * 0.33), 3.6, false); want.push(['depot', ...spot(border, n * 0.44)]); }
     else if (kind === 'pas') { oreField(...polar(axis, n * 0.21), 3.4, false); want.push(['depot', ...spot(border, n * 0.3)]); }
     else { oreField(...polar(border, n * (k <= 2 ? 0.3 : 0.2)), 3.6, false); want.push(['depot', ...spot(border, n * (k <= 2 ? 0.42 : 0.33))]); }
+    // a larger map has more to live off: a field on the road to the middle, and on the largest one more out on the flank
+    if (big > 1 && kind !== 'pas') oreField(...polar(axis, ring * 0.56), 3.6, false);
+    if (big > 1.4) oreField(...polar(axis + sector / 4, n * 0.4), 3.4, false);
   }
   if (fixed) oreField(cx - 0.5, cy - 0.5, 5.2, true); else oreField(Math.round(cx), Math.round(cy), 4.6, true);
   if (kind === 'kors' || kind === 'grav') want.push(['tower', cx, cy]);

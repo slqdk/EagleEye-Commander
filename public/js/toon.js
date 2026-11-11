@@ -1185,40 +1185,89 @@ export const FRAMES = { rad: 16, coil: 2, harv: 2, ref: 2, heli: 2, hq: 8 };
 
 // ---------- infantry: drawn directly in 2D ----------
 function drawInf(g, S, t, c, f, dir, frame) {
-  // dir: 0..7 clockwise from east. u = one "pixel" of the little soldier
-  const u = S / 40, a = dir * Math.PI / 4, dx = Math.cos(a), dy = Math.sin(a), back = dy < -0.3, side = dx < -0.01 ? -1 : 1;
-  const hi = STYLE.detail === 'high', mil = STYLE.palette === 'military', ow = STYLE.outline === 'thin' ? 1.0 : 1.5;
-  const skin = '#f2c9a0', helm = t === 'eng' ? (mil ? '#c9a63c' : '#f2c21c') : f === 'P' ? (mil ? '#6a563c' : '#7b5b3b') : (mil ? '#5e6b4d' : '#6f8259'), boot = '#2b2c33', leg = f === 'P' ? '#77633f' : '#5d6e4c', web = '#3f3b30';
+  // dir: 0..7 clockwise from east. u = one "pixel" of the soldier, who is about 20 u tall with his feet at the origin.
+  // The uniform is the faction's field cloth; the team colour sits on shoulders, sleeves and the helmet band.
+  // Every kind has its own outline: rifle, launcher on the shoulder, raised grenade, fuel tanks and mask, hard hat and toolbox.
+  const u = S / 36, a = dir * Math.PI / 4, dx = Math.cos(a), dy = Math.sin(a), back = dy < -0.3, side = dx < -0.01 ? -1 : 1;
+  const hi = STYLE.detail === 'high', mil = STYLE.palette === 'military', ow = STYLE.outline === 'thin' ? 0.9 : 1.3, P = f === 'P';
+  const cloth = P ? (mil ? '#75674a' : '#93804f') : (mil ? '#586541' : '#66804a'), gear = P ? (mil ? '#463c2b' : '#54462e') : (mil ? '#39432e' : '#42522f');
+  const helm = t === 'eng' ? (mil ? '#c9a63c' : '#f2c21c') : t === 'flm' ? '#3b3e44' : P ? (mil ? '#5f5239' : '#74603b') : (mil ? '#4b5939' : '#566c3f');
+  const skin = '#e0b48a', boot = '#25262b', steel = '#34373d', wood = '#7c5b39', olive = P ? '#5c5236' : '#4f5b3f';
   g.lineJoin = 'round'; g.lineCap = 'round';
   const blob = (x, y, w, h, col, r = 1.6) => { g.beginPath(); g.roundRect((x - w / 2) * u, (y - h / 2) * u, w * u, h * u, r * u); g.fillStyle = col; g.strokeStyle = OUT; g.lineWidth = ow * u; g.stroke(); g.fill(); };
   const line = (x0, y0, x1, y1, w, col) => { g.beginPath(); g.moveTo(x0 * u, y0 * u); g.lineTo(x1 * u, y1 * u); g.strokeStyle = OUT; g.lineWidth = (w + ow + 0.1) * u; g.stroke(); g.strokeStyle = col; g.lineWidth = w * u; g.stroke(); };
-  const step = frame === 1 ? 1.4 : frame === 2 ? -1.4 : 0;
-  if (hi) { blob(-2 + step * 0.4, -3.4, 2.9, 3.6, leg, 1); blob(2 - step * 0.4, -3.4 - Math.abs(step) * 0.2, 2.9, 3.6, leg, 1); }
-  blob(-2 + step * 0.5, hi ? -1.2 : -1.6, hi ? 3.3 : 3, hi ? 2.6 : 4.4, boot, 1); blob(2 - step * 0.5, (hi ? -1.2 : -1.6) - Math.abs(step) * 0.3, hi ? 3.3 : 3, hi ? 2.6 : 4.4, boot, 1);
-  if (t === 'flm' && !back) blob(-side * 2.4, -9, 3.6, 6.5, c.red, 1.6);
-  else if (hi && !back) blob(-side * 2.8, -8.8, 3, 5, web, 1.2);            // the pack shows behind the shoulder
-  blob(0, -8, 7.6, 8, c.T, 2.6);
-  if (hi) { g.fillStyle = 'rgba(255,255,255,0.2)'; g.beginPath(); g.roundRect(-3.1 * u, -11.3 * u, 2.4 * u, 4.6 * u, 1.1 * u); g.fill(); }
-  blob(0, -5.6, 7.6, 1.6, c.Td, 0.6);
-  if (hi && !back) { g.strokeStyle = web; g.lineWidth = 0.9 * u; g.beginPath(); g.moveTo(-side * 2.9 * u, -11.6 * u); g.lineTo(side * 2.2 * u, -6.5 * u); g.stroke(); }
-  // weapon
-  const hx = dx * 3, hy = -8.5 + dy * 2;
-  if (hi && t !== 'gren') line(-side * 3.1, -10.2, hx + dx * 1.2, hy + 0.9, 1.9, c.Td);    // the arm holding it
-  if (t === 'eng') { blob(hx + dx * 1.6, hy + 4.2, 5.2, 3.6, mil ? '#8a3a30' : '#c8372c', 0.8); line(hx + dx * 1.6 - 1.4, hy + 2.3, hx + dx * 1.6 + 1.4, hy + 2.3, 0.9, '#3c3f47'); }      // toolbox
-  else if (t === 'rkt') { line(-dx * 5, -12.5 - dy * 2.5, dx * 7, -12.5 + dy * 3.5, 2.6, '#566246'); line(dx * 6, -12.5 + dy * 3, dx * 7.5, -12.5 + dy * 3.8, 2.8, c.red); }
-  else if (t === 'gren') { line(hx, hy, hx + dx * 3 + 1, hy - 5, 1.8, skin); blob(hx + dx * 3 + 1, hy - 6.5, 3, 3.4, '#4d5a3c', 1.4); }
-  else if (t === 'flm') { line(hx - dx * 2, hy + 1, hx + dx * 6, hy + 1 + dy * 3, 2, '#4a4f58'); line(hx + dx * 6, hy + 1 + dy * 3, hx + dx * 7.4, hy + 1 + dy * 3.7, 2.4, c.fire); }
-  else { line(hx - dx * 3, hy + 0.5 - dy * 1.5, hx + dx * 6.5, hy + 0.5 + dy * 3.2, 1.7, '#3c3f47'); if (hi) line(hx - dx * 3, hy + 0.5 - dy * 1.5, hx - dx * 1, hy + 0.5 - dy * 0.5, 2.1, '#7a5a3a'); }
-  if (hi && t !== 'gren') blob(hx + dx * 1.2, hy + 0.9, 1.9, 1.9, skin, 0.9);
-  if (t === 'flm' && back) blob(0, -8.5, 4.6, 6.5, c.red, 1.6);
-  else if (hi && back) blob(0, -8.6, 4.6, 5.4, web, 1.4);
-  // head and helmet
-  blob(dx * 0.8, -14.4, 6.6, 6, skin, 3);
-  if (!back) { g.fillStyle = OUT; g.fillRect((dx * 2 - 1.4) * u, -15 * u, 1.1 * u, 1.5 * u); g.fillRect((dx * 2 + 1) * u, -15 * u, 1.1 * u, 1.5 * u); }
-  g.beginPath(); g.ellipse(dx * 0.6 * u, -16.2 * u, 4.1 * u, 3 * u, 0, Math.PI, 0); g.closePath(); g.fillStyle = helm; g.strokeStyle = OUT; g.lineWidth = ow * u; g.stroke(); g.fill();
-  if (hi) { g.fillStyle = 'rgba(255,255,255,0.25)'; g.beginPath(); g.ellipse((dx * 0.6 - 1.3) * u, -17.5 * u, 1.5 * u, 0.9 * u, -0.4, 0, 7); g.fill(); g.fillStyle = shade(helm, -0.25); g.fillRect((dx * 0.6 - 4.1) * u, -16.6 * u, 8.2 * u, 0.7 * u); }
-  if (f === 'P') { blob(-3.4 + dx * 0.6, -14.6, 1.8, 3, helm, 0.8); blob(3.4 + dx * 0.6, -14.6, 1.8, 3, helm, 0.8); }
-  else if (!hi) { g.fillStyle = shade(helm, 0.25); g.fillRect((dx * 0.6 - 2.4) * u, -18.2 * u, 2 * u, 1 * u); }
+  const dot = (x, y, r, col) => { g.beginPath(); g.arc(x * u, y * u, r * u, 0, 7); g.fillStyle = col; g.fill(); };
+  const step = frame === 1 ? 1.5 : frame === 2 ? -1.5 : 0, lift = Math.abs(step) * 0.25;
+  // boots and trousers
+  blob(-2.2 + step * 0.5, -1.3, 3.7, 2.6, boot, 1); blob(2.2 - step * 0.5, -1.3 - lift, 3.7, 2.6, boot, 1);
+  blob(-2.1 + step * 0.4, -4.7, 3.3, 5, cloth, 1.1); blob(2.1 - step * 0.4, -4.7 - lift, 3.3, 5, cloth, 1.1);
+  // what he carries on his back: seen beside the body from the front, on top of it from behind
+  const pack = () => {
+    const x = back ? 0 : -side * 3.8;
+    if (t === 'flm') { for (const q of back ? [-2, 2] : [-4.4, 4.4]) { blob(q, -11.2, 3.4, 7.8, c.red, 1.6); if (hi) blob(q, -14.6, 2.2, 1.3, steel, 0.5); } }
+    else if (t === 'rkt') { blob(x, -10.6, back ? 6.2 : 3.6, 6.4, gear, 1.3); for (const q of back ? [-1.6, 1.6] : [x]) { line(q, -13.6, q, -17.4, 1.5, olive); line(q, -17.6, q, -18.4, 1.5, c.red); } }      // spare rockets
+    else if (t === 'eng') { blob(x, -10.2, back ? 5.6 : 3.2, 5.4, gear, 1.2); if (hi) line(back ? 2.4 : x - side * 0.9, -8, back ? 2.4 : x - side * 0.9, -15, 1, '#9aa1a8'); }      // a pipe sticking up
+    else if (t === 'gren') blob(back ? -2.6 : x - side * 0.3, -8, 3.4, 4.2, gear, 1.1);      // grenade satchel on the hip
+    else { blob(x, -10.4, back ? 6.2 : 3.3, 5.8, gear, 1.3); if (hi) blob(x, -13.7, back ? 6.6 : 3.6, 1.8, cloth, 0.8); }      // pack with a rolled blanket
+  };
+  if (!back) pack();
+  // tunic in the team's colour, the faction's webbing over the chest
+  blob(0, -10.4, 9.2, 8.2, c.T, 2.4);
+  if (hi) { g.fillStyle = 'rgba(0,0,0,0.16)'; g.beginPath(); g.roundRect(-4.6 * u, -8.4 * u, 9.2 * u, 2.2 * u, 0.8 * u); g.fill(); }
+  if (t === 'eng') { blob(0, -9.5, 5.6, 6.2, cloth, 1.2); if (!back) for (const q of [-1, 1]) line(q * 1.9, -12.6, q * 2.4, -14.3, 1, cloth); }      // dungarees
+  else if (t === 'gren') { if (!back) { line(-side * 3.6, -13.6, side * 3.2, -7.4, 1.5, gear); if (hi) for (const k of [0.25, 0.5, 0.75]) dot(-side * 3.6 + side * 6.8 * k, -13.6 + 6.2 * k, 0.8, '#3d4a30'); } }      // bandolier
+  else if (!back) { blob(0, -10, 5.6, 6.6, gear, 1.4); if (hi) { blob(-1.5, -8.2, 2, 2, cloth, 0.5); blob(1.5, -8.2, 2, 2, cloth, 0.5); } }
+  blob(0, -6.4, 8.6, 1.5, t === 'eng' ? '#4a3a24' : boot, 0.5);
+  if (t === 'eng' && hi && !back) for (const x of [-2.6, 2.4]) line(x, -6.2, x, -4.4, 0.9, '#c9a63c');      // tools in the belt
+  if (back) pack();
+  // arms and what he holds
+  const hx = dx * 3.2, hy = -9 + dy * 1.6, sl = c.Td, arm = (x0, x1, y1) => { line(x0, -12.6, x1, y1, 1.9, sl); dot(x1, y1, 1.1, skin); };
+  if (t === 'rkt') {
+    const y = -14.4;
+    arm(side * 4, dx * 2.2, y + dy * 0.9 + 1.4);
+    line(-dx * 6.5, y - dy * 2.6, dx * 8, y + dy * 3.2, 3.2, olive); line(-dx * 6.5, y - dy * 2.6, -dx * 5, y - dy * 2, 4.2, olive);      // tube with a flared end
+    line(dx * 8.2, y + dy * 3.3, dx * 9.6, y + dy * 3.9, 2.3, c.red);
+    if (hi) line(dx * 1.5, y + dy * 0.6 - 1.9, dx * 3, y + dy * 1.2 - 1.9, 0.9, steel);
+  } else if (t === 'gren') {
+    arm(-side * 4, -side * 4.4, -7.6);
+    const ax = side * 5.4 + dx * 1.6, ay = -18;
+    line(side * 4.2, -12.8, ax, ay, 1.9, sl); dot(ax, ay, 1.1, skin);
+    line(ax, ay, ax + side * 0.9, ay - 3, 1, wood); blob(ax + side * 1.1, ay - 4, 2.5, 3, '#3d4a30', 1.1);      // stick grenade
+  } else if (t === 'flm') {
+    arm(-side * 4, hx - dx * 1.5, hy + 2.6); arm(side * 4, hx + dx * 2.6, hy + 3.2);
+    line(hx - dx * 3, hy + 2.6 - dy * 1.2, -side * (back ? 2 : 4.4), -8.6, 0.9, steel);      // hose to the tanks
+    line(hx - dx * 3, hy + 2.6 - dy * 1.2, hx + dx * 6.6, hy + 2.6 + dy * 3, 2.4, steel); line(hx + dx * 6.6, hy + 2.6 + dy * 3, hx + dx * 8, hy + 2.6 + dy * 3.6, 1.4, '#8a8f98');
+    dot(hx + dx * 8.9, hy + 2.6 + dy * 4, 1.5, c.fire); dot(hx + dx * 8.9, hy + 2.6 + dy * 4, 0.7, c.hot);      // pilot flame
+  } else if (t === 'eng') {
+    arm(-side * 4, -side * 5.2, -8.6); arm(side * 4, hx + dx * 1.6, hy + 2.6);
+    line(-side * 5.2, -8.6, -side * 6.2, -12.4, 1.1, '#9aa1a8'); dot(-side * 6.3, -12.9, 1, '#9aa1a8'); dot(-side * 6.3, -12.9, 0.45, OUT);      // spanner
+    blob(hx + dx * 1.6, hy + 5, 5.6, 3.6, mil ? '#8a3a30' : '#c8372c', 0.8); line(hx + dx * 1.6 - 1.5, hy + 3, hx + dx * 1.6 + 1.5, hy + 3, 0.9, steel);      // toolbox
+  } else {
+    arm(-side * 4, hx - dx * 1.2, hy + 1); arm(side * 4, hx + dx * 3.2, hy + 1.8);
+    const x0 = hx - dx * 4.6, y0 = hy + 0.8 - dy * 2.2, x1 = hx + dx * 8, y1 = hy + 0.8 + dy * 3.6;
+    line(x0 + (x1 - x0) * 0.3, y0 + (y1 - y0) * 0.3, x1, y1, 1.4, steel); line(x0, y0, x0 + (x1 - x0) * 0.36, y0 + (y1 - y0) * 0.36, 2.3, wood);      // rifle: barrel and stock
+    if (hi) line(x0 + (x1 - x0) * 0.5, y0 + (y1 - y0) * 0.5 + 0.6, x0 + (x1 - x0) * 0.5 - dx * 0.4, y0 + (y1 - y0) * 0.5 + 2.2, 1.1, steel);                // magazine
+  }
+  // head: the helmet sits low, so the face is a strip in its shadow
+  const px = dx * 0.6;
+  blob(px, -15.6, 5.4, 4.6, skin, 2.2);
+  if (!back) {
+    if (t === 'flm') { blob(px + dx * 0.4, -15.3, 5.2, 4, '#2c2f34', 1.6); dot(px + dx * 0.8 - 1.2, -15.8, 0.8, '#c9d2d4'); dot(px + dx * 0.8 + 1.2, -15.8, 0.8, '#c9d2d4'); dot(px + dx * 0.8, -13.9, 1, '#7d838a'); }      // mask
+    else { g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect((px - 2.5) * u, -17.2 * u, 5 * u, 1.5 * u); if (hi) { g.fillStyle = OUT; g.fillRect((px + dx * 1.2 - 1.5) * u, -15.9 * u, 1 * u, 0.9 * u); g.fillRect((px + dx * 1.2 + 0.5) * u, -15.9 * u, 1 * u, 0.9 * u); } }
+  }
+  if (t === 'gren') {      // a field cap with a peak
+    blob(px, -18.2, 6.2, 2.6, cloth, 1); if (!back) { line(px + dx * 1.6 - 1.6, -17, px + dx * 1.6 + 1.6, -17, 0.9, gear); dot(px + dx * 0.6, -18.3, 0.7, c.Tl); }
+  } else {
+    const hr = t === 'eng' ? 3.7 : 4.1;
+    g.beginPath(); g.ellipse(px * u, -17.2 * u, hr * u, 3.3 * u, 0, Math.PI, 0); g.closePath(); g.fillStyle = helm; g.strokeStyle = OUT; g.lineWidth = ow * u; g.stroke(); g.fill();
+    if (t === 'eng') { blob(px, -17.1, 9, 1.3, helm, 0.6); if (hi) line(px, -20.2, px, -18.2, 0.9, shade(helm, -0.2)); }      // hard hat: brim and ridge
+    else {
+      g.fillStyle = shade(helm, -0.22); g.fillRect((px - hr) * u, -17.9 * u, hr * 2 * u, 0.9 * u);      // rim
+      if (t !== 'flm') { g.fillStyle = c.T; g.fillRect((px - hr * 0.86) * u, -19.3 * u, hr * 1.72 * u, 0.8 * u); }      // the team's band
+      if (P && t !== 'flm') { blob(px - 3.7, -16, 1.7, 2.8, helm, 0.8); blob(px + 3.7, -16, 1.7, 2.8, helm, 0.8); }
+    }
+    if (hi) { g.fillStyle = 'rgba(255,255,255,0.22)'; g.beginPath(); g.ellipse((px - 1.4) * u, -19 * u, 1.5 * u, 0.8 * u, -0.4, 0, 7); g.fill(); }
+  }
 }
 
 // ---------- cache ----------
@@ -1233,9 +1282,9 @@ export function sprite(name, S, { dir = 0, color = 0, faction = 'A', frame = 0, 
   else {
     const c = pal(faction, color), mil = STYLE.palette === 'military';
     if (isInf(name)) {
-      const cv = mkCanvas(S * 0.9, S * 0.9), g = cv.getContext('2d');
-      g.translate(S * 0.45, S * 0.78); drawInf(g, S, name, c, faction, dir, frame);
-      s = { cv, ax: S * 0.45, ay: S * 0.78, S };
+      const cv = mkCanvas(S * 0.9, S * 0.96), g = cv.getContext('2d');
+      g.translate(S * 0.45, S * 0.84); drawInf(g, S, name, c, faction, dir, frame);
+      s = { cv, ax: S * 0.45, ay: S * 0.84, S };
     } else {
       const veh = name.endsWith('_t') || !!DEFS.units[name], k = new Kit(dir * Math.PI / 8, c, faction, veh);
       M[name](k, c, faction, frame);

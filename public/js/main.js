@@ -60,7 +60,7 @@ async function refreshHub() {
   const status = m => m.phase === 'lobby' ? ['Venter på start', ''] : m.phase === 'over' ? [m.winner && m.winner.length ? 'Slut · ' + m.winner.join(' og ') + ' vandt' : 'Slut', 'over'] : !m.alive ? ['Du er slået ud', 'over']
     : m.turn ? ['Din tur', 'turn'] : [m.waiting.length ? 'Venter på ' + m.waiting.join(', ') : 'Slaget er på vej', ''];
   const mine = d.mine.map(m => { const [txt, cls] = status(m); return `<div class="mrow"><div><b>${esc(m.name)}</b><small>${m.phase === 'lobby' ? 'Lobby' : 'Runde ' + m.round} · ${esc(m.players.join(', '))} · du er ${esc(m.you)}${m.phase === 'play' && m.deadline ? ' · kamp senest om ' + left(m.deadline) : ''}</small></div><span class="tagc ${cls}">${esc(txt)}</span><span class="row"><button class="btn small ${m.turn ? 'go' : ''}" data-open="${m.i}">Åbn</button>${m.phase === 'over' ? `<button class="xbtn" data-drop="${m.i}" title="Fjern fra listen" aria-label="Fjern fra listen">×</button>` : ''}</span></div>`; }).join('');
-  const open = d.open.filter(o => !d.mine.some(m => m.code === o.code)).map(o => `<div class="mrow"><div><b>${esc(o.name)}</b><small>${esc(o.host)} er vært · ${o.players.length} af 6: ${esc(o.players.join(', '))} · ${DEFS.maps[o.opts.map]} · startkapital ${fmt(o.opts.money)}</small></div><span></span><span class="row"><button class="btn small" data-join="${esc(o.code)}">Deltag</button></span></div>`).join('');
+  const open = d.open.filter(o => !d.mine.some(m => m.code === o.code)).map(o => `<div class="mrow"><div><b>${esc(o.name)}</b><small>${esc(o.host)} er vært · ${o.players.length} af 6: ${esc(o.players.join(', '))} · ${DEFS.maps[o.opts.map]}${o.opts.size && o.opts.size !== 'normal' ? ' (' + DEFS.sizes[o.opts.size].name.toLowerCase() + ')' : ''} · startkapital ${fmt(o.opts.money)}</small></div><span></span><span class="row"><button class="btn small" data-join="${esc(o.code)}">Deltag</button></span></div>`).join('');
   const el = $('#hub'); hubData = d;
   el.innerHTML = (mine ? `<div class="card"><h2>Dine kampe</h2>${mine}</div>` : '') + (open ? `<div class="card"><h2>Åbne kampe</h2>${open}</div>` : '');
   el.hidden = !mine && !open;
@@ -77,13 +77,14 @@ function initMenu() {
   fillPick();
   const opts = (o, cur) => Object.entries(o).map(([k, n]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${n}</option>`).join('');
   $('#quickForm [name=map]').innerHTML = opts(DEFS.maps, 'random'); $('#quickForm [name=theme]').innerHTML = opts(DEFS.themes, 'grass');
+  $('#quickForm [name=size]').innerHTML = Object.entries(DEFS.sizes).map(([k, d]) => `<option value="${k}">${d.name}</option>`).join('');
   $('#quickForm [name=money]').innerHTML = DEFS.moneyChoices.map(m => `<option value="${m}" ${m === DEFS.startMoney ? 'selected' : ''}>${fmt(m)}</option>`).join('');
   for (const box of $$('.fpick')) box.onclick = e => { const b = e.target.closest('button'); if (!b) return; box.dataset.f = b.dataset.f; for (const x of box.children) x.classList.toggle('on', x === b); sfx('click'); };
   $('#btnSet0').onclick = () => { unlock(); showSettings(); };
   $('#quickForm').onsubmit = e => {
     e.preventDefault(); unlock();
     const f = new FormData(e.target), faction = e.target.querySelector('.fpick').dataset.f, bots = +f.get('bots');
-    const be = Local.create({ name: String(f.get('name')).trim() || 'General', faction, bots, map: f.get('map'), theme: f.get('theme'), money: +f.get('money') });
+    const be = Local.create({ name: String(f.get('name')).trim() || 'General', faction, bots, map: f.get('map'), size: f.get('size'), theme: f.get('theme'), money: +f.get('money') });
     enter(be);
   };
   const saved = Local.load();
@@ -148,13 +149,13 @@ function chatBadge() {
 // ---------- lobby ----------
 let prevKey = '', prevMap = null;
 function drawLobbyMap(cv, v) {
-  const k = Math.max(2, v.players.length), key = v.seed + '|' + k + '|' + v.opts.map;
-  if (key !== prevKey) { prevKey = key; prevMap = generateMap(v.seed, k, v.opts.map); }
+  const k = Math.max(2, v.players.length), key = v.seed + '|' + k + '|' + v.opts.map + '|' + v.opts.size;
+  if (key !== prevKey) { prevKey = key; prevMap = generateMap(v.seed, k, v.opts.map, v.opts.size); }
   const m = prevMap, n = m.n, g = cv.getContext('2d'), s = cv.width / n, C = landFor(cfg.palette, v.opts.theme).radar;
   for (let i = 0; i < n * n; i++) { const c = C[m.t[i]] || C['.']; g.fillStyle = m.ore[i] ? '#f0be1e' : `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect((i % n) * s, ((i / n) | 0) * s, s + 0.5, s + 0.5); }
   g.fillStyle = '#c9b48a'; for (const b of m.bridges) for (const c of b.cells) g.fillRect((c % n) * s, ((c / n) | 0) * s, s + 0.5, s + 0.5);
   for (const q of m.neutrals) { g.fillStyle = '#10161c'; g.fillRect(q.x * s - 1, q.y * s - 1, 2 * s + 2, 2 * s + 2); g.fillStyle = '#f4f1e8'; g.fillRect(q.x * s, q.y * s, 2 * s, 2 * s); }
-  for (const q of m.starts) { g.beginPath(); g.arc((q.x + 0.5) * s, (q.y + 0.5) * s, s * 2.1, 0, 7); g.fillStyle = '#ff5a47'; g.strokeStyle = '#10161c'; g.lineWidth = 2; g.fill(); g.stroke(); }
+  for (const q of m.starts) { g.beginPath(); g.arc((q.x + 0.5) * s, (q.y + 0.5) * s, Math.max(3.5, s * 2.1), 0, 7); g.fillStyle = '#ff5a47'; g.strokeStyle = '#10161c'; g.lineWidth = 2; g.fill(); g.stroke(); }
 }
 function renderLobby() {
   const v = st.v, host = v.host === v.me.id, url = location.origin + location.pathname + '?kode=' + v.code, o = v.opts, keep = chatKeep();
@@ -166,20 +167,20 @@ function renderLobby() {
     <div class="row"><div><small style="color:var(--dim)">INVITATIONSKODE</small><div class="code">${esc(v.code)}</div></div><span class="grow"></span><button class="btn" id="lbCopy">Kopiér invitationslink</button></div>
     <div>${v.players.map(p => { const mine = p.id === v.me.id, can = mine || (host && p.kind === 'ai'); return `<div class="lrow"><i class="chip" style="background:${DEFS.colors[p.color].main}"></i><span>${esc(p.name)}${p.kind === 'ai' ? ' <small style="color:var(--dim)">AI</small>' : ''}${mine ? ' <small style="color:var(--gold)">dig</small>' : ''}</span>${fsel(p, !can)}${tsel(p, !can)}${host && p.kind === 'ai' ? `<button class="btn small warn" data-kick="${p.id}">Fjern</button>` : '<span></span>'}</div>`; }).join('')}</div>
     <div class="lobby2"><div class="opts">
-      ${opt('Kort', 'lbMap', Object.entries(DEFS.maps), o.map)}${opt('Landskab', 'lbTheme', Object.entries(DEFS.themes), o.theme)}
+      ${opt('Kort', 'lbMap', Object.entries(DEFS.maps), o.map)}${opt('Størrelse', 'lbSize', Object.entries(DEFS.sizes).map(([k, d]) => [k, d.name]), o.size)}${opt('Landskab', 'lbTheme', Object.entries(DEFS.themes), o.theme)}
       ${opt('Startkapital', 'lbMoney', DEFS.moneyChoices.map(m => [m, fmt(m)]), o.money)}${opt('Alliancer', 'lbDiplo', Object.entries(DEFS.diplo), o.diplo)}
       ${opt('Runde senest efter', 'lbHours', [[0, 'ingen frist'], [12, '12 timer'], [24, '1 døgn'], [48, '2 døgn'], [72, '3 døgn']], o.roundHours)}${opt('Våbenhvile', 'lbPeace', [0, 1, 2, 3, 4, 5].map(n => [n, n + (n === 1 ? ' runde' : ' runder')]), o.peace)}
       ${opt('På forsiden', 'lbOpen', [[1, 'Åben for alle'], [0, 'Kun med kode']], o.open ? 1 : 0)}
     </div><div><canvas id="lbPrev" width="176" height="176" title="Kortet, som det bliver med det nuværende antal generaler"></canvas>${host && o.map === 'random' ? '<button class="btn small" id="lbSeed" style="width:100%;margin-top:6px">Nyt kort</button>' : ''}</div></div>
-    <p class="hint">${DIPLO_HELP[o.diplo]} Røde prikker er baserne, hvide felter er neutrale bygninger, som en ingeniør kan overtage.</p>
+    <p class="hint">${DIPLO_HELP[o.diplo]} Røde prikker er baserne, hvide felter er neutrale bygninger, som en ingeniør kan overtage.${o.size !== 'normal' ? ' På et ' + DEFS.sizes[o.size].name.toLowerCase() + ' kort varer hvert slag ' + DEFS.sizes[o.size].seconds + ' sekunder, så de langsomme enheder kan nå frem.' : ''}</p>
     ${chatHTML(v, false)}
     ${host ? `<div class="acts"><button class="btn" id="lbLeave">Tilbage</button><button class="btn" id="lbBot" ${v.players.length >= 6 ? 'disabled' : ''}>Tilføj AI-general</button><button class="btn go" id="lbStart" ${v.players.length < 2 ? 'disabled' : ''}>Start kampen</button></div>`
     : `<p class="hint">Venter på, at værten starter kampen …</p><div class="acts"><button class="btn" id="lbLeave">Tilbage</button></div>`}`;
   const C = $('#lobbyCard');
   drawLobbyMap($('#lbPrev'), v); wireChat(keep);
   C.onchange = e => {
-    const el = e.target, key = { lbMap: 'map', lbTheme: 'theme', lbMoney: 'money', lbDiplo: 'diplo', lbHours: 'roundHours', lbPeace: 'peace', lbOpen: 'open' }[el.id];
-    if (key) return doAct({ a: 'opts', [key]: key === 'map' || key === 'theme' || key === 'diplo' ? el.value : +el.value });
+    const el = e.target, key = { lbMap: 'map', lbSize: 'size', lbTheme: 'theme', lbMoney: 'money', lbDiplo: 'diplo', lbHours: 'roundHours', lbPeace: 'peace', lbOpen: 'open' }[el.id];
+    if (key) return doAct({ a: 'opts', [key]: ['map', 'size', 'theme', 'diplo'].includes(key) ? el.value : +el.value });
     const id = +el.dataset.id; if (!id) return;
     if (id === v.me.id) doAct(el.dataset.k === 'f' ? { a: 'faction', f: el.value } : { a: 'team', team: +el.value });
     else doAct(el.dataset.k === 'f' ? { a: 'botSet', id, f: el.value } : { a: 'botSet', id, team: +el.value });

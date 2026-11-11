@@ -50,8 +50,8 @@ export class Remote {
 
 export class Local {
   constructor(game) { this.game = game; this.kind = 'local'; this.pid = game.players.find(p => p.kind === 'human').id; }
-  static create({ name, faction, bots, botFactions = [], peace = 2, map, theme, money }) {
-    const g = newGame({ name: 'Træfning', seed: (Math.random() * 2 ** 32) >>> 0, roundHours: 0, peace, map, theme, money, diplo: 'fixed', open: false });
+  static create({ name, faction, bots, botFactions = [], peace = 2, map, size, theme, money }) {
+    const g = newGame({ name: 'Træfning', seed: (Math.random() * 2 ** 32) >>> 0, roundHours: 0, peace, map, size, theme, money, diplo: 'fixed', open: false });
     addPlayer(g, { name: name || 'General', faction });
     for (let i = 0; i < bots; i++) addBot(g, botFactions[i]);
     startGame(g, 0);

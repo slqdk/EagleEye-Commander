@@ -16,7 +16,7 @@ export const allied = (a, b) => teamKey(a) === teamKey(b);
 const mates = (game, p) => game.players.filter(q => q.alive && allied(p, q));      // p's alliance, p included
 
 // ---------- lobby ----------
-const OPTS = { roundHours: 24, peace: DEFS.peaceRounds, map: 'random', theme: 'grass', money: DEFS.startMoney, diplo: 'notice', open: true };
+const OPTS = { roundHours: 24, peace: DEFS.peaceRounds, map: 'random', size: 'normal', theme: 'grass', money: DEFS.startMoney, diplo: 'notice', open: true };
 export function newGame({ name, seed, now = 0, ...opts }) {
   const game = { v: 2, name, seed: seed >>> 0, phase: 'lobby', round: 0, deadline: 0, opts: { ...OPTS }, nextId: 1, host: 0,
     players: [], map: null, ore: '', bridges: [], neut: [], chat: [], chatId: 0, offers: [], nextTeam: 4, last: null, winner: null, rev: 1, created: now };
@@ -35,6 +35,7 @@ function setOpts(game, a) {
   if (a.roundHours != null) o.roundHours = Math.max(0, Math.min(168, +a.roundHours || 0));
   if (a.peace != null) o.peace = Math.max(0, Math.min(10, a.peace | 0));
   if (a.map != null && MAP_KINDS.includes(a.map)) o.map = a.map;
+  if (a.size != null && DEFS.sizes[a.size]) o.size = a.size;
   if (a.theme != null && DEFS.themes[a.theme]) o.theme = a.theme;
   if (a.money != null && DEFS.moneyChoices.includes(+a.money)) o.money = +a.money;
   if (a.diplo != null && DEFS.diplo[a.diplo]) o.diplo = a.diplo;
@@ -68,7 +69,7 @@ export function addBot(game, faction) {
 export function startGame(game, now) {
   if (game.phase !== 'lobby') fail('Kampen er allerede i gang.');
   const k = game.players.length; if (k < 2) fail('Der skal mindst to generaler til en kamp.');
-  const map = generateMap(game.seed, k, game.opts.map), n = map.n, R = mulberry32(game.seed ^ 0x5bd1e995);
+  const map = generateMap(game.seed, k, game.opts.map, game.opts.size), n = map.n, R = mulberry32(game.seed ^ 0x5bd1e995);
   game.map = { n, t: map.t, starts: map.starts }; game.ore = oreToStr(map.ore);
   game.bridges = map.bridges.map(b => ({ id: game.nextId++, x: b.x, y: b.y, w: b.w, h: b.h, cells: b.cells, a: b.a, hp: DEFS.bridge.hp }));
   game.neut = map.neutrals.map(q => ({ id: game.nextId++, t: q.t, x: q.x, y: q.y, o: 0 }));
@@ -332,7 +333,7 @@ export function maybeResolve(game, now) {
 
 export function buildSnapshot(game) {
   return {
-    map: game.map, ore: game.ore, seed: hashStr(game.seed + ':' + game.round), round: game.round, peace: peaceLeft(game) > 0, duration: DEFS.roundSeconds,
+    map: game.map, ore: game.ore, seed: hashStr(game.seed + ':' + game.round), round: game.round, peace: peaceLeft(game) > 0, duration: (DEFS.sizes[game.opts.size] || DEFS.sizes.normal).seconds,
     bridges: game.bridges.map(b => ({ ...b })), neut: game.neut.map(q => ({ ...q })),
     players: game.players.filter(p => p.alive).map(p => {
       const ps = powerState(p);

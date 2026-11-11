@@ -32,7 +32,7 @@ const fileOf = code => path.join(DATA, code + '.json');
 const validCode = c => /^[A-Z0-9]{6}$/.test(c);
 const now = () => Math.floor(Date.now() / 1000);
 const meta = g => ({ code: g.code, name: g.name, phase: g.phase, round: g.round, created: g.created || 0, deadline: g.deadline || 0, host: g.host,
-  opts: { map: g.opts.map, money: g.opts.money, diplo: g.opts.diplo, open: g.opts.open, roundHours: g.opts.roundHours },
+  opts: { map: g.opts.map, size: g.opts.size, money: g.opts.money, diplo: g.opts.diplo, open: g.opts.open, roundHours: g.opts.roundHours },
   players: g.players.map(p => ({ id: p.id, name: p.name, kind: p.kind, alive: p.alive, ready: p.ready })), winner: g.winner ? g.winner.names : null });
 function read(code) { const g = upgrade(JSON.parse(fs.readFileSync(fileOf(code), 'utf8'))); g.code = code; g.savedRev = g.rev; return g; }
 function load(code) {
@@ -108,7 +108,7 @@ const api = {
   create(b, ip) {
     const pin = checkPin(b.pin); mayCreate(ip);
     const g = newGame({ name: String(b.game || '').trim().slice(0, 24) || 'Operation Ørneøje', seed: crypto.randomBytes(4).readUInt32LE(0), now: now(),
-      roundHours: b.roundHours ?? 24, peace: b.peace ?? 2, map: b.map, theme: b.theme, money: b.money, diplo: b.diplo, open: b.open });
+      roundHours: b.roundHours ?? 24, peace: b.peace ?? 2, map: b.map, size: b.size, theme: b.theme, money: b.money, diplo: b.diplo, open: b.open });
     g.code = newCode();
     const p = addPlayer(g, { name: b.name, faction: b.faction, auth: hashPin(pin), now: now() });
     for (let i = 0; i < Math.max(0, Math.min(5, b.bots | 0)); i++) addBot(g);

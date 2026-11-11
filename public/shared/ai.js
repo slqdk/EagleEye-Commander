@@ -58,6 +58,13 @@ export function aiTurn(game, p, R) {
     if (!tryAct(game, p, { a: 'build', t: target, x: s[0], y: s[1] })) break;
   }
 
+  // a fallen bridge is put up again now and then, or the way round may be too long for an attack to arrive
+  const down = (game.bridges || []).filter(b => !(b.hp > 0));
+  if (down.length && p.money >= DEFS.bridge.cost + 1500 && (game.round + p.id) % 2 === 0) {
+    const hq = p.buildings.find(b => b.t === 'hq') || p.buildings[0];
+    down.sort((a, b) => Math.hypot(a.x - hq.x, a.y - hq.y) - Math.hypot(b.x - hq.x, b.y - hq.y));
+    tryAct(game, p, { a: 'rebridge', id: down[0].id });
+  }
   // 3. an engineer when there is a neutral building to take, then the rest on troops (keep some back for the next building early on)
   const me = p.buildings.find(b => b.t === 'hq') || p.buildings[0];
   const free = (game.neut || []).filter(q => { const o = game.players.find(x => x.id === q.o); return !o || !allied(p, o); })

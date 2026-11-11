@@ -16,7 +16,14 @@ export const DEFS = {
   buildGap: 2,           // new buildings must be this close to one of your own
   sellRate: 0.5,
   repairRate: 0.4,       // repairing full health costs this share of the price
-  guardRange: 11,        // home units engage enemies this close to their post
+  guardRange: 11,        // home units engage enemies this close to their post …
+  homeRange: 6,          // … and any enemy this close to one of the base's buildings
+  spyCost: 200,          // a radar station can spy on an enemy general: his camp as it is right now (mines stay hidden)
+  mineCap: 10,           // minefields a general can have at one time
+  mineGap: 5,            // a minefield must be this close to one of the base's buildings
+  // The A-bomb: rounds of preparation (after the first silo and after every use), when in the battle it is launched and
+  // lands (seconds), blast radius, the inner share where everything is destroyed, damage further out as a share of full health.
+  nuke: { prep: 5, launch: 1, hit: 5, r: 4.5, core: 0.6, edge: 0.8 },
   startArmy: { inf: 5, rkt: 2 },
   ore: { value: 50, cellMax: 12, cap: 10, rate: 1, unload: 3, regrow: 1, spread: 0.03 },
   bridge: { name: 'Bro', hp: 3000, cost: 800 },   // only shot at on purpose: an attack group whose target is the bridge
@@ -29,7 +36,7 @@ export const DEFS = {
   },
   maps: { random: 'Tilfældigt', kors: 'Korsvejen', grav: 'Voldgraven', pas: 'Bjergpasset' },
   // Map size: how much longer each side is, and how long a battle lasts (the slow units must be able to get there).
-  sizes: { normal: { name: 'Normalt', k: 1, seconds: 150 }, large: { name: 'Stort', k: 1.3, seconds: 180 }, huge: { name: 'Kæmpe', k: 1.6, seconds: 210 } },
+  sizes: { normal: { name: 'Normalt', k: 1, seconds: 150 }, large: { name: 'Stort', k: 1.3, seconds: 180 }, huge: { name: 'Kæmpe', k: 1.6, seconds: 210 }, giant: { name: 'Enormt', k: 2, seconds: 250 } },
   themes: { grass: 'Grønt', snow: 'Sne', desert: 'Ørken' },
   diplo: { fixed: 'Faste hold', notice: 'Pagter med varsel', free: 'Pagter uden varsel' },
 
@@ -72,7 +79,7 @@ export const DEFS = {
     fac:  { name: 'Kampvognsfabrik', f: 'AP', w: 3, h: 3, cost: 1500, hp: 3000, power: -30, sight: 5, needs: ['ref'],
             desc: 'Bygger køretøjer og ekstra malmhøstere.' },
     rad:  { name: 'Radarstation', f: 'AP', w: 2, h: 2, cost: 900, hp: 1700, power: -40, sight: 12, needs: ['ref'],
-            desc: 'Tænder radarkortet, afslører fjendens kommandocentraler og låser op for artilleri.' },
+            desc: 'Tænder radarkortet og låser op for artilleri og spionage: find fjendens lejre, og angrib dem fra radaren.' },
     tech: { name: 'Teknologicenter', f: 'AP', w: 3, h: 2, cost: 1600, hp: 2000, power: -60, sight: 5, needs: ['rad', 'fac'],
             desc: 'Låser op for fraktionens tungeste våben.' },
     air:  { name: 'Flyveplads', f: 'AP', w: 3, h: 2, cost: 1300, hp: 1700, power: -40, sight: 6, needs: ['rad'],
@@ -97,6 +104,11 @@ export const DEFS = {
             desc: 'Skyder kun på fly. Langsom, men hvert træf gør ondt.' },
     wall: { name: 'Betonmur', f: 'AP', w: 1, h: 1, cost: 50, hp: 600, power: 0, sight: 1, wall: true, needs: ['bar'],
             desc: 'Tvinger fjenden til at bryde igennem eller gå udenom.' },
+    mine: { name: 'Minefelt', f: 'AP', w: 1, h: 1, cost: 100, hp: 1, power: 0, sight: 0, mine: true, needs: ['bar'],
+            boom: { w: 'he', dmg: 260, splash: 1.3 },
+            desc: 'Usynligt for fjenden. Springer én gang, når en fjendtlig enhed på jorden kører eller går ind på feltet.' },
+    silo: { name: 'Raketsilo', f: 'AP', w: 2, h: 2, cost: 3000, hp: 1500, power: -80, sight: 4, needs: ['tech'], only: 'one',
+            desc: 'Gør en A-bombe klar på fem runder. Bomben sættes på et angreb mod en lejr og rammer den tætteste klynge af bygninger.' },
   },
 
   // cls: inf / light / heavy. from: where it is produced. r: body radius in cells.
@@ -142,3 +154,5 @@ export const B = t => DEFS.buildings[t];
 export const U = t => DEFS.units[t];
 export const dmgMult = (w, cls) => DEFS.dmg[w][cls] ?? 0;
 export const isCombat = t => !DEFS.units[t].harv;
+// a building that makes up the base: walls and minefields do not count
+export const isBase = t => !DEFS.buildings[t].wall && !DEFS.buildings[t].mine;

@@ -49,7 +49,7 @@ function burst(freq, q, dur, vol, t = ctx.currentTime, type = 'lowpass', f1 = fr
   env(g, t, 0.004, vol, dur); s.connect(f); f.connect(g); g.connect(master); s.start(t, Math.random()); s.stop(t + dur + 0.02);
 }
 const last = {};
-const GAP = { mg: 0.07, cannon: 0.08, boom: 0.09, rocket: 0.12, zap: 0.12, flame: 0.12, tick: 0.045, cash: 0.06, bigboom: 0.2, radio: 0.3, construct: 0.4, door: 0.3 };
+const GAP = { mg: 0.07, cannon: 0.08, boom: 0.09, rocket: 0.12, zap: 0.12, flame: 0.12, tick: 0.045, cash: 0.06, bigboom: 0.2, radio: 0.3, construct: 0.4, door: 0.3, siren: 1.5, nuke: 1 };
 
 export function sfx(name, vol = 1) {
   if (!cfg.sfx || !ctx || vol <= 0.02) return;
@@ -75,6 +75,9 @@ export function sfx(name, vol = 1) {
     case 'zap': tone('sawtooth', 1800, 180, 0.24, 0.2 * v); burst(5000, 4, 0.2, 0.2 * v, t, 'bandpass'); break;
     case 'boom': tone('sine', 110, 35, 0.4, 0.5 * v); burst(600, 0.7, 0.4, 0.4 * v, t, 'lowpass', 120); break;
     case 'bigboom': tone('sine', 90, 28, 0.9, 0.7 * v); burst(900, 0.7, 0.9, 0.55 * v, t, 'lowpass', 80); break;
+    // an air-raid siren winding up, and the long rumble of the bomb
+    case 'siren': for (let i = 0; i < 2; i++) { const o = ctx.createOscillator(), g = ctx.createGain(), tt = t + i * 0.95; o.type = 'sawtooth'; o.frequency.setValueAtTime(330, tt); o.frequency.linearRampToValueAtTime(620, tt + 0.5); o.frequency.linearRampToValueAtTime(330, tt + 0.95); g.gain.setValueAtTime(0.0001, tt); g.gain.linearRampToValueAtTime(0.16 * v, tt + 0.08); g.gain.setValueAtTime(0.16 * v, tt + 0.85); g.gain.linearRampToValueAtTime(0.0001, tt + 0.95); o.connect(g); g.connect(master); o.start(tt); o.stop(tt + 1); } break;
+    case 'nuke': tone('sine', 70, 22, 3.2, 0.9 * v); tone('sine', 140, 30, 1.4, 0.5 * v); burst(1400, 0.5, 0.5, 0.7 * v, t, 'lowpass', 200); burst(500, 0.6, 3.4, 0.6 * v, t + 0.05, 'lowpass', 50); burst(2400, 0.8, 1.6, 0.18 * v, t + 0.3, 'bandpass', 300); break;
     case 'alert': tone('square', 620, 620, 0.14, 0.16 * v); tone('square', 470, 470, 0.14, 0.16 * v, t + 0.16); tone('square', 620, 620, 0.14, 0.16 * v, t + 0.32); break;
     case 'drum': tone('sine', 120, 50, 0.3, 0.7 * v); tone('sine', 120, 50, 0.3, 0.7 * v, t + 0.22); tone('sine', 160, 60, 0.5, 0.8 * v, t + 0.44); burst(3000, 1, 0.12, 0.2 * v, t + 0.44, 'highpass'); break;
     case 'radio': burst(1900, 5, 0.07, 0.16 * v, t, 'bandpass'); tone('square', 1250, 1250, 0.035, 0.05 * v, t + 0.02); break;
@@ -106,6 +109,7 @@ const SPEECH = {   // spoken by the browser only when the recorded voices are un
   building: 'Construction underway.', ready: 'Building is good to go.', unit: 'Unit reporting for duty.', nomoney: 'Negative. Not enough funds.', lowpower: 'Warning. Power is critical.',
   cant: "Negative. Can't build there.", attack: 'Contact! Base is taking fire!', harv: 'Harvester is taking fire!', lost: 'We lost a building!', orders: 'Copy that. Orders confirmed.',
   battle: 'All units, move out!', won: 'Outstanding, commander. The field is ours.', defeat: "We've been overrun. Fall back.",
+  nukein: 'Incoming warhead! Take cover!', nukeout: 'Warhead is away.', nukeready: 'Warhead is standing by, commander.',
 };
 function speak(text, pitch) {
   if (!window.speechSynthesis || !text) return;
@@ -120,7 +124,7 @@ const HOLD = { unitlost: 9000, attack: 6000, harv: 6000, lost: 3000 };
 export function say(key) {
   if (!cfg.voice || !ctx) return;
   const now = Date.now(); if (said[key] && now - said[key] < (HOLD[key] || 2500)) return; said[key] = now;
-  if (packState === 'ready') { const v = VOICE_INDEX.a[key]; if (v) playClip(pick(v, key), key === 'attack' || key === 'harv' || key === 'lost' || key === 'won' || key === 'defeat' ? 3 : 2); }
+  if (packState === 'ready') { const v = VOICE_INDEX.a[key]; if (v) playClip(pick(v, key), key === 'attack' || key === 'harv' || key === 'lost' || key === 'won' || key === 'defeat' || key === 'nukein' || key === 'nukeout' ? 3 : 2); }
   else if (packState === 'failed') speak(SPEECH[key], 0.7);
 }
 // A unit answers: kind 's' when it is selected, 'g' when it is sent off.

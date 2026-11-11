@@ -26,7 +26,7 @@ export const MAP_KINDS = ['random', 'kors', 'grav', 'pas'];
 //   grav  the moat: a river in a ring around the middle, a bridge on every base's road and a ford between neighbours
 //   pas   mountain pass: ridges between neighbours with one pass each, all valleys meet in the middle
 // size: 'normal', 'large' or 'huge' (sides 1.3 and 1.6 times as long, with more ore to match).
-export const SIZE_K = { normal: 1, large: 1.3, huge: 1.6 };
+export const SIZE_K = { normal: 1, large: 1.3, huge: 1.6, giant: 2 };
 export function generateMap(seed, k, kind = 'random', size = 'normal') {
   const fixed = kind === 'kors' || kind === 'grav' || kind === 'pas', big = SIZE_K[size] || 1;
   if (fixed) seed = hashStr('kort:' + kind + ':' + k + (big > 1 ? ':' + size : ''));

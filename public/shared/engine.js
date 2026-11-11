@@ -1,6 +1,6 @@
 // EagleEye Commander — rules: lobby, economy, building, training, orders and round resolution.
 // Pure functions on a plain game object, so the same code runs on the server and in offline play.
-import { DEFS } from './defs.js';
+import { DEFS, isBase } from './defs.js';
 import { generateMap, MAP_KINDS } from './map.js';
 import { createSim, dockOf } from './sim.js';
 import { mulberry32, hashStr, packBits, unpackBits, oreToArr, oreToStr, stamp } from './util.js';
@@ -28,6 +28,7 @@ export function upgrade(game) {
   game.opts = { ...OPTS, diplo: 'fixed', open: false, ...game.opts };
   for (const k of ['bridges', 'neut', 'chat', 'offers']) if (!Array.isArray(game[k])) game[k] = [];
   game.chatId = game.chatId | 0; game.nextTeam = game.nextTeam || 4;
+  for (const p of game.players) { if (!p.intel) p.intel = {}; p.nukeAt = p.nukeAt | 0; }
   return game;
 }
 function setOpts(game, a) {
@@ -54,7 +55,7 @@ export function addPlayer(game, { name, kind = 'human', faction = 'A', team = 0,
   if (!DEFS.factions[faction]) faction = 'A';
   let color = 0; while (game.players.some(p => p.color === color)) color++;
   const p = { id: game.nextId++, name, kind, faction, team: team | 0, color, money: 0, buildings: [], army: {}, orders: [], ready: false,
-    explored: '', known: {}, alive: true, trained: {}, stats: { killed: 0, lost: 0, bKilled: 0, bLost: 0, income: 0 }, report: null, auth };
+    explored: '', known: {}, intel: {}, nukeAt: 0, alive: true, trained: {}, stats: { killed: 0, lost: 0, bKilled: 0, bLost: 0, income: 0 }, report: null, auth };
   game.players.push(p);
   if (!game.host && kind === 'human') game.host = p.id;
   else say(game, 0, name + ' er med.', now);
@@ -97,6 +98,14 @@ export function powerState(p) {
 }
 export const hasOn = (p, t, ps) => p.buildings.some(b => b.t === t && !ps.off[b.id]);
 export const armySize = p => Object.values(p.army).reduce((s, n) => s + n, 0);
+// The A-bomb: a silo with power, and the preparation done. at: the round from which it can be used.
+export function nukeState(p, round, ps = powerState(p)) {
+  const built = p.buildings.some(b => b.t === 'silo'), on = hasOn(p, 'silo', ps), at = p.nukeAt | 0;
+  return { built, on, at, left: Math.max(0, at - round), ready: on && at > 0 && round >= at };
+}
+// A camp is found when the general knows at least one of its buildings: seen by his troops, or by a spy.
+export const campFound = (p, q) => { for (const id in p.known) if (p.known[id].o === q.id) return true; return false; };
+const gen = name => name + (/[sxz]$/i.test(name) ? "'" : 's');      // Danish possessive
 // free pads for aircraft
 export function airRoom(p, ps) {
   const pads = p.buildings.filter(b => b.t === 'air' && !ps.off[b.id]).length * DEFS.padsPerAirfield;
@@ -111,6 +120,8 @@ export function buildBlock(p, t, ps = powerState(p)) {
   const hq = p.buildings.some(b => b.t === 'hq');
   if (d.only === 'nohq') return hq ? 'Du har allerede en kommandocentral.' : '';
   if (!hq) return 'Uden kommandocentral kan du ikke bygge. Genopbyg den først.';
+  if (d.only === 'one' && p.buildings.some(b => b.t === t)) return 'Du har allerede en ' + d.name.toLowerCase() + '.';
+  if (d.mine && p.buildings.filter(b => b.t === t).length >= DEFS.mineCap) return 'Du kan højst have ' + DEFS.mineCap + ' minefelter ad gangen.';
   for (const nd of d.needs || []) if (!hasOn(p, nd, ps)) return 'Kræver ' + BD[nd].name.toLowerCase() + ' med strøm.';
   return '';
 }
@@ -138,28 +149,32 @@ export function placeBlock(occ, n, own, t, x, y) {
   if (x < 1 || y < 1 || x + d.w > n - 1 || y + d.h > n - 1) return 'Uden for kortet.';
   for (let yy = y; yy < y + d.h; yy++) for (let xx = x; xx < x + d.w; xx++) if (occ[yy * n + xx]) return 'Kan ikke placeres her.';
   if (t === 'ref') { const dy = y + d.h, dx = x + 1; if (dy >= n - 1 || occ[dy * n + dx]) return 'Porten mod syd skal være fri.'; }
-  let near = false;
+  // a wall may continue a wall; everything else must lie near a building of the base (a minefield a little further out)
+  const gap = d.mine ? DEFS.mineGap : DEFS.buildGap; let near = false;
   for (const b of own) {
-    const bd = BD[b.t]; if (bd.wall && !d.wall) continue;
+    const bd = BD[b.t]; if (bd.mine || (bd.wall && !d.wall)) continue;
     const gx = Math.max(b.x - (x + d.w), x - (b.x + bd.w), 0), gy = Math.max(b.y - (y + d.h), y - (b.y + bd.h), 0);
-    if (Math.max(gx, gy) <= DEFS.buildGap) { near = true; break; }
+    if (Math.max(gx, gy) <= gap) { near = true; break; }
   }
-  return near ? '' : 'For langt fra dine bygninger.';
+  return near ? '' : d.mine ? 'For langt fra din base.' : 'For langt fra dine bygninger.';
 }
 const allBuildings = game => game.players.flatMap(p => p.alive ? p.buildings : []);
-const occOf = game => makeOcc(game.map, game.ore, allBuildings(game), game.neut);
+// What stands in the way when p builds. A hostile minefield does not: nobody can see it, and whoever builds on it clears it.
+const occOf = (game, p) => makeOcc(game.map, game.ore, game.players.flatMap(q => !q.alive ? [] : q !== p && !allied(p, q) ? q.buildings.filter(b => !BD[b.t].mine) : q.buildings), game.neut);
+function clearMines(game, p, b) {
+  const d = BD[b.t];
+  for (const q of game.players) if (q !== p && q.alive && !allied(p, q)) q.buildings = q.buildings.filter(m => !(BD[m.t].mine && m.x >= b.x && m.x < b.x + d.w && m.y >= b.y && m.y < b.y + d.h));
+}
 
 function reveal(game, p, cx, cy, r) {
   const n = game.map.n, e = unpackBits(p.explored, n * n); stamp(e, n, cx, cy, r); p.explored = packBits(e);
 }
-function revealHQs(game, p) {
-  for (const q of game.players) if (q.alive && !allied(p, q)) for (const b of q.buildings) if (b.t === 'hq') { p.known[b.id] = { t: b.t, x: b.x, y: b.y, o: q.id }; reveal(game, p, b.x + 1, b.y + 1, 3); }
-}
 export const sellValue = b => Math.round(BD[b.t].cost * DEFS.sellRate * b.hp / BD[b.t].hp);
 export const repairCost = b => Math.ceil(BD[b.t].cost * DEFS.repairRate * (1 - b.hp / BD[b.t].hp));
 
-function cleanOrders(p, orders) {
-  const out = [], left = { ...p.army };
+// An order may name a camp (the general's id) instead of only a place, and one such order per round may carry the A-bomb.
+function cleanOrders(p, orders, game) {
+  const out = [], left = { ...p.army }; let nuke = false;
   for (const o of (orders || []).slice(0, DEFS.maxOrders)) {
     const units = {}; let cnt = 0;
     for (const t in o.units || {}) {
@@ -173,7 +188,13 @@ function cleanOrders(p, orders) {
       const l = [...new Set(o.slots[t].map(i => i | 0))].filter(i => i >= 0 && i < (p.army[t] | 0)).slice(0, units[t]);
       if (l.length) slots[t] = l;
     }
-    out.push(Object.keys(slots).length ? { units, pts, slots } : { units, pts });
+    const r = Object.keys(slots).length ? { units, pts, slots } : { units, pts };
+    const q = o.camp ? game.players.find(x => x.id === (o.camp | 0)) : null;
+    if (q && q !== p && q.alive && !allied(p, q) && (p.kind === 'ai' || campFound(p, q))) {
+      r.camp = q.id;
+      if (o.nuke && !nuke && peaceLeft(game) <= 0 && nukeState(p, game.round).ready) nuke = r.nuke = true;
+    }
+    out.push(r);
   }
   return out;
 }
@@ -210,15 +231,16 @@ export function act(game, pid, a, now = 0) {
     case 'build': {
       const why = buildBlock(p, a.t, ps); if (why) fail(why);
       const d = BD[a.t], cells = d.wall && Array.isArray(a.cells) ? a.cells.slice(0, 40) : [[a.x, a.y]];
-      const occ = occOf(game), n = game.map.n; let placed = 0;
+      const occ = occOf(game, p), n = game.map.n; let placed = 0;
       for (const [x, y] of cells) {
         if (p.money < d.cost) { if (!placed) fail('Utilstrækkelige midler.'); break; }
         const r = placeBlock(occ, n, p.buildings, a.t, x | 0, y | 0); if (r) { if (cells.length === 1) fail(r); continue; }
         p.money -= d.cost;
         const b = { id: game.nextId++, t: a.t, x: x | 0, y: y | 0, hp: d.hp }; p.buildings.push(b); placed++;
         for (let yy = b.y; yy < b.y + d.h; yy++) for (let xx = b.x; xx < b.x + d.w; xx++) occ[yy * n + xx] = 2;
-        reveal(game, p, b.x + d.w / 2, b.y + d.h / 2, d.sight);
-        if (a.t === 'rad') revealHQs(game, p);
+        clearMines(game, p, b);
+        if (!d.mine) reveal(game, p, b.x + d.w / 2, b.y + d.h / 2, d.sight);
+        if (a.t === 'silo' && !p.nukeAt) p.nukeAt = game.round + DEFS.nuke.prep;      // the first silo starts the preparation
       }
       if (!placed) fail('Kan ikke placeres her.');
       break;
@@ -226,9 +248,9 @@ export function act(game, pid, a, now = 0) {
     case 'sell': {
       const i = p.buildings.findIndex(b => b.id === a.id); if (i < 0) fail('Bygningen findes ikke.');
       const b = p.buildings[i];
-      if (!BD[b.t].wall && p.buildings.filter(q => !BD[q.t].wall).length <= 1) fail('Du kan ikke sælge din sidste bygning.');
+      if (isBase(b.t) && p.buildings.filter(q => isBase(q.t)).length <= 1) fail('Du kan ikke sælge din sidste bygning.');
       p.money += sellValue(b); p.buildings.splice(i, 1);
-      p.orders = cleanOrders(p, p.orders);
+      p.orders = cleanOrders(p, p.orders, game);
       break;
     }
     case 'repair': {
@@ -255,13 +277,46 @@ export function act(game, pid, a, now = 0) {
       const d = UD[a.t]; if (!d) fail('Ukendt enhed.');
       const c = Math.min(a.n | 0 || 1, p.trained[a.t] | 0, p.army[a.t] | 0); if (c <= 0) fail('Kun enheder trænet i denne runde kan fortrydes.');
       p.army[a.t] -= c; p.trained[a.t] -= c; p.money += d.cost * c; if (!p.army[a.t]) delete p.army[a.t];
-      p.orders = cleanOrders(p, p.orders);
+      p.orders = cleanOrders(p, p.orders, game);
       break;
     }
     case 'orders': {
-      const n = game.map.n;
-      for (const o of a.orders || []) for (const q of o.pts || []) if (!(q[0] >= 0 && q[1] >= 0 && q[0] < n && q[1] < n)) fail('Ruten ligger uden for kortet.');
-      p.orders = cleanOrders(p, a.orders);
+      const n = game.map.n; let bombs = 0;
+      for (const o of a.orders || []) {
+        for (const q of o.pts || []) if (!(q[0] >= 0 && q[1] >= 0 && q[0] < n && q[1] < n)) fail('Ruten ligger uden for kortet.');
+        const q = o.camp ? game.players.find(x => x.id === (o.camp | 0)) : null;
+        if (o.camp) {
+          if (!q || q === p || !q.alive) fail('Ukendt lejr.');
+          if (allied(p, q)) fail(q.name + ' er din allierede.');
+          if (p.kind !== 'ai' && !campFound(p, q)) fail('Du har ikke fundet ' + gen(q.name) + ' lejr endnu. Spionér først.');
+        }
+        if (o.nuke) {
+          const ns = nukeState(p, game.round, ps);
+          if (!q) fail('A-bomben skal have en lejr som mål.');
+          if (++bombs > 1) fail('A-bomben kan kun sættes på ét angreb.');
+          if (!ns.built) fail('Du har ingen raketsilo.');
+          if (!ns.on) fail('Raketsiloen mangler strøm.');
+          if (!ns.ready) fail('A-bomben er først klar i runde ' + ns.at + '.');
+          if (peaceLeft(game) > 0) fail('Der er våbenhvile. A-bomben kan ikke bruges endnu.');
+        }
+      }
+      p.orders = cleanOrders(p, a.orders, game);
+      break;
+    }
+    case 'spy': {      // a look at an enemy camp as it is right now; minefields stay hidden. Allies get the picture too.
+      const q = game.players.find(x => x.id === (a.id | 0));
+      if (!q || q === p || !q.alive) fail('Ukendt general.');
+      if (allied(p, q)) fail('I er allierede. Du kan allerede se hans base.');
+      if (!hasOn(p, 'rad', ps)) fail('Spionage kræver en radarstation med strøm.');
+      if (p.money < DEFS.spyCost) fail('Utilstrækkelige midler.');
+      p.money -= DEFS.spyCost;
+      const n = game.map.n, seen = q.buildings.filter(b => !BD[b.t].mine);
+      for (const m of mates(game, p)) {
+        const e = unpackBits(m.explored, n * n);
+        for (const b of seen) { m.known[b.id] = { t: b.t, x: b.x, y: b.y, o: q.id }; stamp(e, n, b.x + BD[b.t].w / 2, b.y + BD[b.t].h / 2, 2.5 + BD[b.t].w / 2); }
+        m.explored = packBits(e);
+        m.intel[q.id] = { round: game.round, army: { ...q.army } };
+      }
       break;
     }
     case 'ready': p.ready = !!a.on; break;
@@ -316,8 +371,8 @@ export function act(game, pid, a, now = 0) {
 function leaveTeam(game, p) {
   for (const q of mates(game, p)) {
     if (q === p) continue;
-    for (const b of q.buildings) p.known[b.id] = { t: b.t, x: b.x, y: b.y, o: q.id };
-    for (const b of p.buildings) q.known[b.id] = { t: b.t, x: b.x, y: b.y, o: p.id };
+    for (const b of q.buildings) if (!BD[b.t].mine) p.known[b.id] = { t: b.t, x: b.x, y: b.y, o: q.id };
+    for (const b of p.buildings) if (!BD[b.t].mine) q.known[b.id] = { t: b.t, x: b.x, y: b.y, o: p.id };
   }
   p.team = 0; delete p.leaving;
 }
@@ -332,14 +387,27 @@ export function maybeResolve(game, now) {
 }
 
 export function buildSnapshot(game) {
+  const peace = peaceLeft(game) > 0, byId = new Map(game.players.map(p => [p.id, p]));
+  // where a group goes when its target is a camp: the command centre as it stands now, wherever the general last saw it
+  const aimOf = q => { const b = q.buildings.find(x => x.t === 'hq') || q.buildings.find(x => isBase(x.t)); return b ? [b.x + (BD[b.t].w >> 1), b.y + (BD[b.t].h >> 1)] : null; };
   return {
-    map: game.map, ore: game.ore, seed: hashStr(game.seed + ':' + game.round), round: game.round, peace: peaceLeft(game) > 0, duration: (DEFS.sizes[game.opts.size] || DEFS.sizes.normal).seconds,
+    map: game.map, ore: game.ore, seed: hashStr(game.seed + ':' + game.round), round: game.round, peace, duration: (DEFS.sizes[game.opts.size] || DEFS.sizes.normal).seconds,
     bridges: game.bridges.map(b => ({ ...b })), neut: game.neut.map(q => ({ ...q })),
     players: game.players.filter(p => p.alive).map(p => {
-      const ps = powerState(p);
+      const ps = powerState(p), orders = []; let nuke = null;
+      for (const o of p.orders) {
+        let r = o;
+        if (o.camp) {
+          const q = byId.get(o.camp), aim = q && q.alive && !allied(p, q) ? aimOf(q) : null;
+          if (!aim) continue;      // the camp is gone, or its general has become an ally
+          r = { ...o, pts: [...o.pts.slice(0, -1), aim] };
+          if (o.nuke && !peace && !nuke && nukeState(p, game.round, ps).ready) nuke = { to: q.id };
+        }
+        if (r.pts.length && Object.keys(r.units).length) orders.push(r);
+      }
       return { id: p.id, name: p.name, team: teamKey(p), faction: p.faction, color: p.color, explored: p.explored, harv: harvCount(p, ps),
         buildings: p.buildings.map(b => ({ id: b.id, t: b.t, x: b.x, y: b.y, hp: b.hp, off: ps.off[b.id] ? 1 : 0 })),
-        army: { ...p.army }, orders: p.orders.filter(o => o.pts.length && Object.keys(o.units).length) };
+        army: { ...p.army }, orders, ...(nuke ? { nuke } : {}) };
     }),
   };
 }
@@ -354,7 +422,7 @@ export function resolveRound(game, now = 0) {
   const byId = new Map(game.players.map(p => [p.id, p]));
   snap.players.forEach((sp, i) => {
     const p = byId.get(sp.id), r = res.players[i];
-    const aid = Math.round(DEFS.aid * p.buildings.reduce((v, b) => v + (dead.has(b.id) && !BD[b.t].wall ? BD[b.t].cost : 0), 0));
+    const aid = Math.round(DEFS.aid * p.buildings.reduce((v, b) => v + (dead.has(b.id) && isBase(b.t) ? BD[b.t].cost : 0), 0));
     p.buildings = p.buildings.filter(b => !dead.has(b.id));
     for (const b of p.buildings) if (res.hp[b.id] != null) b.hp = Math.min(BD[b.t].hp, res.hp[b.id]);
     let lostValue = 0; const lost = {};
@@ -371,6 +439,10 @@ export function resolveRound(game, now = 0) {
     p.stats.killed += r.killed; p.stats.lost += lostValue; p.stats.bKilled += r.bKilled; p.stats.bLost += r.bLost; p.stats.income += income;
     p.report = { round: game.round, income: r.income, supply: DEFS.hqIncome, aid, depot, lost, lostValue, killed: r.killed, bLost: r.bLost, bKilled: r.bKilled };
     p.seenNow = r.seen;
+    if (r.nuked) {      // the bomb is gone, and the next one takes as long to prepare
+      p.nukeAt = game.round + DEFS.nuke.prep; p.report.nuked = sp.nuke.to;
+      say(game, 0, p.name + ' har kastet en A-bombe over ' + gen(byId.get(sp.nuke.to).name) + ' lejr.', now);
+    }
     p.orders = []; p.ready = false; p.trained = {};
   });
   // what everybody now knows about enemy buildings
@@ -393,14 +465,17 @@ export function resolveRound(game, now = 0) {
   for (const p of game.players) if (p.alive && p.leaving) { leaveTeam(game, p); say(game, 0, p.name + ' er trådt ud af sin alliance.', now); }
   // eliminations and victory
   for (const p of game.players) {
-    if (p.alive && !p.buildings.some(b => !BD[b.t].wall)) {
+    if (p.alive && !p.buildings.some(b => isBase(b.t))) {
       p.alive = false; p.army = {}; p.buildings = []; out.push(p.name);
       for (const q of game.neut) if (q.o === p.id) q.o = 0;
       say(game, 0, p.name + ' er slået ud.', now);
     }
   }
   game.offers = game.offers.filter(o => game.round - o.round < 3 && byId.get(o.from).alive && byId.get(o.to).alive);
-  for (const p of game.players) for (const id in p.known) { const k = p.known[id], o = byId.get(k.o); if (!o || !o.alive) delete p.known[id]; }
+  for (const p of game.players) {
+    for (const id in p.known) { const k = p.known[id], o = byId.get(k.o); if (!o || !o.alive) delete p.known[id]; }
+    for (const id in p.intel) { const o = byId.get(+id); if (!o || !o.alive || allied(p, o)) delete p.intel[id]; }
+  }
   const alive = game.players.filter(p => p.alive), teamsAlive = [...new Set(alive.map(teamKey))];
   game.last = { round: game.round, snap, out };
   if (teamsAlive.length <= 1 || !alive.some(p => p.kind === 'human')) {
@@ -414,7 +489,9 @@ export function resolveRound(game, now = 0) {
 // ---------- what a player gets to see ----------
 export function view(game, pid, now = 0) {
   const me = game.players.find(p => p.id === pid);
-  const pub = p => ({ id: p.id, name: p.name, kind: p.kind, faction: p.faction, color: p.color, team: p.team, alive: p.alive, ready: p.ready, stats: p.stats, ...(p.leaving ? { leaving: true } : {}) });
+  // atom: everybody can see that a general has a working silo, and how many rounds are left until his bomb is ready (0 = now)
+  const atom = p => { const ns = p.alive && game.phase === 'play' ? nukeState(p, game.round) : null; return ns && ns.on && ns.at ? { atom: ns.left } : {}; };
+  const pub = p => ({ id: p.id, name: p.name, kind: p.kind, faction: p.faction, color: p.color, team: p.team, alive: p.alive, ready: p.ready, stats: p.stats, ...(p.leaving ? { leaving: true } : {}), ...atom(p) });
   const strip = p => { const { auth, ...rest } = p; return rest; };
   return {
     rev: game.rev, name: game.name, code: game.code || '', phase: game.phase, round: game.round, deadline: game.deadline, opts: game.opts, host: game.host,

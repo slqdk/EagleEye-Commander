@@ -1,5 +1,5 @@
 // EagleEye Commander — battlefield drawing: cartoon terrain, sprites, shroud, effects and the radar.
-import { sprite, TURRET, FRAMES, isInf, OUT, shade, KZ, STYLE } from './toon.js';
+import { sprite, TURRET, FRAMES, isInf, OUT, shade, mix, KZ, STYLE } from './toon.js';
 import { DEFS } from '../shared/defs.js';
 import { mulberry32 } from '../shared/util.js';
 
@@ -56,6 +56,7 @@ export class Renderer {
     // shadows, damaged building sprites, idle animation, amount of smoke and dust, sprite resolution
     this.opt = { shadows: true, damage: true, anim: true, particles: 1, sharp: 'auto' };
     this.S = 64; this.oreSp = null; this.dirtCache = new Map(); this.brInfo = new Map(); this.theme = 'grass';
+    this.shakeT = -99; this.flashT = -99;      // when the ground last shook, and when the screen was last blinded
     this.pickS();
   }
   pickS() { const hd = this.dpr > 1.3, s = this.opt.sharp; this.S = s === 'high' ? (hd ? 128 : 96) : s === 'normal' ? 64 : hd ? 96 : 64; }
@@ -77,7 +78,8 @@ export class Renderer {
   }
   toCell(px, py) { const c = this.cam; return [(px - this.w / 2) / c.z + c.x, (py - this.h / 2) / c.z + c.y]; }
   toScreen(x, y) { const c = this.cam; return [(x - c.x) * c.z + this.w / 2, (y - c.y) * c.z + this.h / 2]; }
-  clear() { this.fx = []; this.decals = []; this.pings = []; }
+  clear() { this.fx = []; this.decals = []; this.pings = []; this.shakeT = this.flashT = -99; }
+  flash() { this.flashT = this.t; }
   chance(p) { return Math.random() < p * this.opt.particles; }
 
   // ---------- terrain ----------
@@ -302,6 +304,22 @@ export class Renderer {
     } else if (e.k === 'cap') {
       this.fx.push({ k: 'ring', x: e.x, y: e.y, r: 1.7, t0: t, life: 0.6 }); this.fx.push({ k: 'tx', x: e.x, y: e.y - 0.6, txt: 'OVERTAGET', t0: t, life: 1.8 });
     } else if (e.k === 'hl') { this.fx.push({ k: 'tx', x: e.x, y: e.y - 0.3, txt: '+', col: '#7cf07c', t0: t, life: 0.7 });
+    } else if (e.k === 'mn') {      // a minefield goes off: a blast, a fountain of earth and a crater
+      this.boom(e.x, e.y, 1.25);
+      for (let i = 0; i < 9 * this.opt.particles; i++) this.puff(e.x + (Math.random() - 0.5) * 0.5, e.y + (Math.random() - 0.5) * 0.4, 0.1, i % 2 ? '#7d6846' : '#ab9468', 0.12 + Math.random() * 0.08, 0.75, 1.5 + Math.random() * 1.2, (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 0.7);
+      this.fx.push({ k: 'tx', x: e.x, y: e.y - 0.3, txt: 'MINE!', col: '#ff9a6a', t0: t, life: 1.2 });
+    } else if (e.k === 'nl') {      // the rocket climbs out of its silo on a pillar of smoke
+      this.fx.push({ k: 'rk', x: e.x - 0.2, y: e.y + 0.14, up: 1, t0: t, life: 2.4 });
+      for (let i = 0; i < 18 * this.opt.particles; i++) this.puff(e.x - 0.2 + (Math.random() - 0.5) * 0.9, e.y + 0.3 + (Math.random() - 0.5) * 0.6, 0.1, '#ece8dc', 0.2 + Math.random() * 0.16, 1.5 + Math.random() * 0.6, 0.45, (Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 1.3);
+      this.shakeT = t; this.shakeLife = 0.9; this.shakeAmp = 0.05;
+    } else if (e.k === 'nk') {      // the bomb: a blinding ball, a mushroom cloud, rings rolling out and scorched ground
+      const r = e.r, q = this.opt.particles;
+      this.fx.push({ k: 'nuke', x: e.x, y: e.y, r, t0: t, life: 6 });
+      for (let i = 0; i < 3; i++) this.fx.push({ k: 'ring', x: e.x, y: e.y, r: r * (1.1 + i * 0.55), t0: t + i * 0.16, life: 0.9 + i * 0.25 });
+      for (let i = 0; i < 12 * q; i++) { const a = Math.random() * 6.283, d = Math.sqrt(Math.random()) * r; this.boom(e.x + Math.cos(a) * d, e.y + Math.sin(a) * d * 0.85, 0.9 + Math.random() * 0.9, 0.15 + Math.random() * 1.1); }
+      for (let i = 0; i < 16 * q; i++) { const a = Math.random() * 6.283, d = r * (0.5 + Math.random() * 0.7); this.puff(e.x + Math.cos(a) * d, e.y + Math.sin(a) * d * 0.85, 0.1, '#5c5550', 0.3 + Math.random() * 0.25, 2.2 + Math.random() * 1.6, 0.35, Math.cos(a) * 1.1, Math.sin(a) * 0.8); }
+      this.decals.push({ x: e.x, y: e.y, r: r * 0.95 }, { x: e.x, y: e.y, r: r * 0.6 });
+      this.shakeT = t; this.shakeLife = 1.8; this.shakeAmp = 0.3;
     } else if (e.k === 'ud') {
       if (e.c === 'inf') { for (let i = 0; i < 4; i++) this.puff(e.x + (Math.random() - 0.5) * 0.3, e.y, 0.2, '#f1f1ea', 0.14, 0.5, 0.8, (Math.random() - 0.5), 0); }
       else if (e.c === 'air') { this.boom(e.x, e.y, 1.1, 0, AIR); for (let i = 0; i < 6; i++) this.puff(e.x, e.y, AIR * (1 - i / 6), '#3c3c42', 0.16, 0.9, -0.3, 0, 0); this.boom(e.x, e.y, 0.7, 0.5); this.decals.push({ x: e.x, y: e.y, r: 0.45, wreck: 1, t0: t + 0.5, rot: Math.random() * 3 }); }
@@ -320,7 +338,8 @@ export class Renderer {
   draw(scene, time) {
     const g = this.g, c = this.cam, dpr = this.dpr, Z = c.z * dpr, W = this.cv.width, H = this.cv.height, n = this.map.n, S = this.S, k = Z / S, opt = this.opt;
     this.t = time; this.colors = scene.colors;
-    const X = x => (x - c.x) * Z + W / 2, Y = y => (y - c.y) * Z + H / 2;
+    const sk = Math.max(0, 1 - (time - this.shakeT) / (this.shakeLife || 1)), ox = sk ? (Math.random() - 0.5) * sk * this.shakeAmp * Z : 0, oy = sk ? (Math.random() - 0.5) * sk * this.shakeAmp * Z : 0;
+    const X = x => (x - c.x) * Z + W / 2 + ox, Y = y => (y - c.y) * Z + H / 2 + oy;
     g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = this.land().sky; g.fillRect(0, 0, W, H);
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'medium';
     const x0 = Math.max(0, Math.floor(c.x - W / Z / 2)), y0 = Math.max(0, Math.floor(c.y - H / Z / 2)), x1 = Math.min(n, Math.ceil(c.x + W / Z / 2)), y1 = Math.min(n, Math.ceil(c.y + H / Z / 2));
@@ -341,7 +360,7 @@ export class Renderer {
     }
     list.sort((a, b) => a.key - b.key); air.sort((a, b) => a.y - b.y);
     // worn ground around the buildings
-    if (STYLE.detail === 'high') for (const it of list) { if (!it.b || it.d.wall || it.b.gone) continue; const b = it.b, d = it.d, cv = this.dirt(d.w, d.h); g.drawImage(cv, X(b.x - 0.7), Y(b.y - 0.7), (d.w + 1.4) * Z, (d.h + 1.4) * Z); }
+    if (STYLE.detail === 'high') for (const it of list) { if (!it.b || it.d.wall || it.d.mine || it.b.gone) continue; const b = it.b, d = it.d, cv = this.dirt(d.w, d.h); g.drawImage(cv, X(b.x - 0.7), Y(b.y - 0.7), (d.w + 1.4) * Z, (d.h + 1.4) * Z); }
     // ore
     const ore = scene.ore, isStr = typeof ore === 'string';
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
@@ -437,6 +456,18 @@ export class Renderer {
       g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
       g.drawImage(this.fogCv, X(0), Y(0), n * Z, n * Z);
     }
+    // where an A-bomb is about to land (a: 0 at launch, 1 at impact): a closing reticle, and the rocket coming down at the end
+    for (const q of scene.aims || []) {
+      const px = X(q.x), py = Y(q.y), R = q.r * Z, beat = 0.5 + 0.5 * Math.sin(time * (8 + q.a * 14));
+      g.lineWidth = 6 * dpr; g.strokeStyle = OUT; g.setLineDash([14 * dpr, 9 * dpr]); g.lineDashOffset = -time * 40 * dpr; g.beginPath(); g.ellipse(px, py, R, R * 0.85, 0, 0, 7); g.stroke();
+      g.lineWidth = 3 * dpr; g.strokeStyle = `rgba(255,${Math.round(70 + beat * 120)},50,1)`; g.stroke(); g.setLineDash([]);
+      const rr = R * (1 - q.a) * 0.9 + 6 * dpr;
+      for (const [w, col] of [[5, OUT], [2.4, '#ffd23e']]) { g.lineWidth = w * dpr; g.strokeStyle = col; g.beginPath(); g.ellipse(px, py, rr, rr * 0.85, 0, 0, 7); g.moveTo(px - rr - 8 * dpr, py); g.lineTo(px - rr * 0.4, py); g.moveTo(px + rr * 0.4, py); g.lineTo(px + rr + 8 * dpr, py); g.moveTo(px, py - rr * 0.85 - 8 * dpr); g.lineTo(px, py - rr * 0.34); g.moveTo(px, py + rr * 0.34); g.lineTo(px, py + rr * 0.85 + 8 * dpr); g.stroke(); }
+      this.icon(px, py - R * 0.85 - 14 * dpr, '☢', beat > 0.5 ? '#ffd23e' : '#ff5a3a');
+      if (q.a > 0.72) { const f = (q.a - 0.72) / 0.28, z = (1 - f) * (1 - f) * 11; this.rocket(X(q.x + z * 0.12), Y(q.y - z * KZ), Z, false); }
+    }
+    const fl = 1 - (time - this.flashT) / 1.1;
+    if (fl > 0) { g.fillStyle = `rgba(255,251,232,${(fl * fl * 0.92).toFixed(3)})`; g.fillRect(0, 0, W, H); }
     if (scene.overlay) scene.overlay(g, X, Y, Z, dpr);
   }
   // A building coming up out of the ground (or going back down when it is sold).
@@ -447,6 +478,16 @@ export class Renderer {
     g.save(); g.beginPath(); g.rect(left - 6, top - h * 0.15, w + 12, h * 1.15 + 1); g.clip();
     g.drawImage(sp.cv, left, top + (1 - r) * h, w, h); g.restore();
     if (this.chance(0.75)) this.puff(b.x + Math.random() * d.w, b.y + d.h - 0.2 + Math.random() * 0.25, 0.05, '#e6dcc0', 0.15 + Math.random() * 0.1, 0.55, 0.35, (Math.random() - 0.5) * 0.9, 0.05);
+  }
+  // the A-bomb's rocket, about one cell long, nose up or nose down
+  rocket(px, py, Z, up) {
+    const g = this.g, L = Z * 0.95, w = Z * 0.17, d = up ? -1 : 1, ow = Math.max(1.5, Z * 0.045);
+    const body = () => { g.beginPath(); g.moveTo(px - w, py - d * L * 0.25); g.lineTo(px - w, py + d * L * 0.45); g.quadraticCurveTo(px, py + d * L * 1.02, px + w, py + d * L * 0.45); g.lineTo(px + w, py - d * L * 0.25); g.closePath(); };
+    g.lineJoin = 'round';
+    for (const sx of [-1, 1]) { g.beginPath(); g.moveTo(px + sx * w, py - d * L * 0.05); g.lineTo(px + sx * w * 2.3, py - d * L * 0.32); g.lineTo(px + sx * w, py - d * L * 0.25); g.closePath(); g.lineWidth = ow * 2; g.strokeStyle = OUT; g.stroke(); g.fillStyle = '#c8402f'; g.fill(); }      // fins
+    g.fillStyle = '#ffd23e'; g.beginPath(); g.moveTo(px - w * 0.7, py - d * L * 0.25); g.lineTo(px, py - d * L * (0.6 + Math.random() * 0.25)); g.lineTo(px + w * 0.7, py - d * L * 0.25); g.closePath(); g.fill();      // flame
+    g.lineWidth = ow * 2; g.strokeStyle = OUT; body(); g.stroke(); g.fillStyle = '#f1efe6'; g.fill();
+    g.save(); body(); g.clip(); g.fillStyle = '#c8402f'; g.fillRect(px - w, py + d * L * (up ? 1.02 : 0.52), w * 2, d * (up ? -1 : 1) * L * 0.5); g.fillStyle = 'rgba(0,0,0,0.16)'; g.fillRect(px + w * 0.25, py - L * 1.1, w, L * 2.2); g.restore();
   }
   selRing(px, py, r) {
     const g = this.g, dpr = this.dpr; r = Math.max(r, 7 * dpr);
@@ -514,6 +555,37 @@ export class Renderer {
       } else if (f.k === 'ring') {
         const r = f.r * Z * (0.3 + a * 0.9);
         g.globalAlpha = (1 - a) * 0.75; g.strokeStyle = '#fff3c4'; g.lineWidth = (3.5 - a * 2.5) * dpr; g.beginPath(); g.ellipse(X(f.x), Y(f.y), r, r * 0.78, 0, 0, 7); g.stroke(); g.globalAlpha = 1;
+      } else if (f.k === 'rk') {      // the rocket leaving its silo: slowly at first, then gone
+        const z = 0.35 + a * a * 16, x = f.x + a * a * 0.6;
+        if (this.chance(0.9)) this.puff(x + (Math.random() - 0.5) * 0.2, f.y, z - 0.6, a < 0.3 ? '#ffe9b0' : '#ece8dc', 0.16 + Math.random() * 0.1, 0.9, -0.5, (Math.random() - 0.5) * 0.5, 0);
+        this.rocket(X(x), Y(f.y - z * KZ), Z, true);
+      } else if (f.k === 'nuke') {    // the mushroom cloud: a glowing ball that rises on a stem, turns to smoke and thins out
+        const px = X(f.x), gy = Y(f.y), R = f.r * Z, up = Math.min(1, a * 2.4), rise = 1 - (1 - up) * (1 - up), hot = Math.max(0, 1 - a * 3.4), fade = a < 0.7 ? 1 : 1 - (a - 0.7) / 0.3;
+        const smoke = mix('#fff3c2', mix('#ff9632', '#8d837c', Math.min(1, a * 2.2)), Math.min(1, a * 5)), lite = shade(smoke, 0.16), dark = shade(smoke, -0.2), ow = Math.max(2, Z * 0.06);
+        if (hot > 0) { g.globalAlpha = hot * 0.85; g.fillStyle = '#fffbe8'; g.beginPath(); g.ellipse(px, gy, R * (0.45 + a * 3), R * (0.45 + a * 3) * 0.82, 0, 0, 7); g.fill(); g.globalAlpha = 1; }
+        const H = f.r * 1.45 * Z * KZ * rise + R * 0.15 * a, cr = R * (0.3 + 0.24 * rise + 0.1 * a), sw = R * (0.17 + 0.05 * rise), br = R * (0.3 + 0.75 * Math.min(1, a * 2));
+        // painted around (cx, cy), the point on the ground under the cloud: dust rolling outwards, the stem, the cap
+        const paint = (q, cx, cy) => {
+          const blobs = [], N = 11;
+          for (let i = 0; i < N; i++) { const an = i / N * 6.283 + 0.3; blobs.push([cx + Math.cos(an) * br, cy + Math.sin(an) * br * 0.8 - R * 0.05, R * (0.2 + 0.06 * ((i * 7) % 3))]); }
+          const capY = cy - H, cap = [[0, -0.2, 1], [-0.82, 0.14, 0.7], [0.82, 0.14, 0.7], [-0.4, 0.34, 0.6], [0.42, 0.34, 0.6], [0, 0.42, 0.5]].map(([x, y, r]) => [cx + x * cr, capY + y * cr, r * cr]);
+          const stem = () => { q.beginPath(); q.moveTo(cx - sw * 1.5, cy); q.quadraticCurveTo(cx - sw * 0.7, cy - H * 0.5, cx - sw, capY + cr * 0.3); q.lineTo(cx + sw, capY + cr * 0.3); q.quadraticCurveTo(cx + sw * 0.7, cy - H * 0.5, cx + sw * 1.5, cy); q.closePath(); };
+          const circles = (list, grow, col) => { q.fillStyle = col; q.beginPath(); for (const [x, y, r] of list) { q.moveTo(x + r + grow, y); q.arc(x, y, r + grow, 0, 7); } q.fill(); };
+          circles(blobs, ow, OUT); circles(blobs, 0, dark);
+          q.lineWidth = ow * 2; q.strokeStyle = OUT; q.lineJoin = 'round'; stem(); q.stroke(); q.fillStyle = smoke; q.fill();
+          q.fillStyle = dark; q.beginPath(); q.moveTo(cx + sw * 0.3, capY + cr * 0.3); q.lineTo(cx + sw, capY + cr * 0.3); q.quadraticCurveTo(cx + sw * 0.7, cy - H * 0.5, cx + sw * 1.5, cy); q.lineTo(cx + sw * 0.6, cy); q.quadraticCurveTo(cx + sw * 0.15, cy - H * 0.5, cx + sw * 0.3, capY + cr * 0.3); q.fill();
+          circles(cap, ow, OUT); circles(cap, 0, smoke);
+          circles([[cap[0][0] + cr * 0.3, cap[0][1] + cr * 0.34, cr * 0.5], [cap[2][0] + cr * 0.05, cap[2][1] + cr * 0.12, cr * 0.42]], 0, dark);
+          circles([[cap[0][0] - cr * 0.28, cap[0][1] - cr * 0.3, cr * 0.5], [cap[1][0] - cr * 0.1, cap[1][1] - cr * 0.16, cr * 0.34]], 0, lite);
+          if (hot > 0) { q.globalAlpha = hot; circles([[cx, capY, cr * 0.75]], 0, '#fff6c8'); q.globalAlpha = 1; }
+        };
+        if (fade >= 1) paint(g, px, gy);
+        else {      // thinning out: painted on a sheet of its own first, so the parts do not show through each other
+          const pad = ow + 4, hw = Math.ceil(br + R * 0.36 + pad), top = Math.ceil(H + cr * 1.25 + pad), cw = hw * 2, ch = top + Math.ceil(br * 0.8 + R * 0.36 + pad);
+          const sheet = this.cloudCv || (this.cloudCv = mk(8, 8)); if (sheet.width < cw || sheet.height < ch) { sheet.width = Math.max(sheet.width, cw); sheet.height = Math.max(sheet.height, ch); }
+          const q = sheet.getContext('2d'); q.clearRect(0, 0, sheet.width, sheet.height); paint(q, hw, top);
+          g.globalAlpha = fade; g.drawImage(sheet, 0, 0, cw, ch, px - hw, gy - top, cw, ch); g.globalAlpha = 1;
+        }
       } else if (f.k === 'd') {
         const dt = t - f.t0, z = Math.max(0, f.z + f.vz * dt - 4.2 * dt * dt), s = f.r * Z;
         g.save(); g.translate(X(f.x + f.vx * dt), Y(f.y + f.vy * dt - z * KZ)); g.rotate(f.rot + dt * f.spin);
@@ -541,7 +613,7 @@ export class Renderer {
       g.drawImage(this.oreCv, 0, 0, w, h);
       const vis = scene.fog ? scene.fog.vis : null, mine = scene.mine || (() => true);
       for (const b of scene.bridges || []) if (!b.dead && b.hp > 0) { g.fillStyle = '#c9b48a'; for (const c of b.cells) g.fillRect((c % n) * s, ((c / n) | 0) * s, Math.max(1.5, s), Math.max(1.5, s)); }
-      for (const b of scene.buildings) { if (b.dead) continue; const d = BD[b.t], o = scene.colors[b.o]; g.fillStyle = b.neutral && !o ? '#f4f1e8' : DEFS.colors[o ? o.color : 0].main; g.fillRect(b.x * s, b.y * s, Math.max(2, d.w * s), Math.max(2, d.h * s)); if (b.neutral) { g.strokeStyle = '#10161c'; g.lineWidth = 1; g.strokeRect(b.x * s + 0.5, b.y * s + 0.5, Math.max(2, d.w * s) - 1, Math.max(2, d.h * s) - 1); } }
+      for (const b of scene.buildings) { if (b.dead || BD[b.t].mine) continue; const d = BD[b.t], o = scene.colors[b.o]; g.fillStyle = b.neutral && !o ? '#f4f1e8' : DEFS.colors[o ? o.color : 0].main; g.fillRect(b.x * s, b.y * s, Math.max(2, d.w * s), Math.max(2, d.h * s)); if (b.neutral) { g.strokeStyle = '#10161c'; g.lineWidth = 1; g.strokeRect(b.x * s + 0.5, b.y * s + 0.5, Math.max(2, d.w * s) - 1, Math.max(2, d.h * s) - 1); } }
       for (const u of scene.units) { if (u.dead || (vis && !mine(u.o) && !vis[(u.y | 0) * n + (u.x | 0)])) continue; const o = scene.colors[u.o]; g.fillStyle = DEFS.colors[o ? o.color : 0].light; g.fillRect(u.x * s - 1, u.y * s - 1, 2.4, 2.4); }
       if (scene.fog) { this.updateFog(scene.fog); g.drawImage(this.fogCv, 0, 0, w, h); }
       for (const p of this.pings) { const a = (time - p.t0) / 3; if (a > 1 || a < 0) continue; g.strokeStyle = `rgba(255,70,50,${1 - a})`; g.lineWidth = 2; g.beginPath(); g.arc(p.x * s, p.y * s, 4 + (a * 3 % 1) * 16, 0, 7); g.stroke(); }
@@ -556,5 +628,14 @@ export class Renderer {
     }
     const c = this.cam, vw = this.w / c.z * s, vh = this.h / c.z * s;
     g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.strokeRect(c.x * s - vw / 2, c.y * s - vh / 2, vw, vh);
+    // the enemy camps that have been found: a ring in the general's colour (gold with a cross when an attack is planned)
+    const k = w / (cv.clientWidth || w);      // canvas pixels per screen pixel: the markers keep their size on a small radar
+    for (const q of scene.camps || []) {
+      const px = q.x * s, py = q.y * s, r = (q.on ? 7.5 + Math.sin(time * 6) * 1.2 : 6) * k, col = DEFS.colors[q.color] || DEFS.colors[0];
+      g.lineWidth = 4.5 * k; g.strokeStyle = '#10161c'; g.beginPath(); g.arc(px, py, r, 0, 7); g.stroke();
+      g.lineWidth = 2.2 * k; g.strokeStyle = q.atk ? '#ffd23e' : '#ffffff'; g.stroke();
+      g.fillStyle = col.main; g.beginPath(); g.arc(px, py, r * 0.52, 0, 7); g.fill();
+      if (q.atk) { g.lineWidth = 2 * k; g.strokeStyle = '#ffd23e'; g.beginPath(); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { g.moveTo(px + dx * r * 1.15, py + dy * r * 1.15); g.lineTo(px + dx * r * 1.9, py + dy * r * 1.9); } g.stroke(); }
+    }
   }
 }

@@ -44,6 +44,10 @@ ANNOUNCER = dict(voice='michael', pitch=0.95, tempo=1.1, fx='hq', lines={
     'cancel':     ['Scrubbed.'],
     'peace':      ['Ceasefire is in effect.'],
     'out':        ['Hostile commander is down.'],
+    'spy':        ['Recon is in. We have eyes on their camp.', 'Camp located, commander.'],
+    'nukeready':  ['Warhead is standing by, commander.'],
+    'nukeout':    ['Warhead is away.'],
+    'nukein':     ['Incoming warhead! Take cover!'],
 })
 
 # Every unit type answers in its own voice: s = when selected, g = when sent off.

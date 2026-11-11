@@ -67,7 +67,7 @@ Status after the third session (v2.3.2, 11 Nov 2026). Read this first when conti
 
 ## Known gaps and ideas, roughly in priority order
 
-0. **It has never run for real.** The installer was only run in the build container with a stand-in for systemd; `proxmox-lxc.sh` and the Dockerfile have not been run at all, and no match with real people has been played (update this when Søren reports from his Proxmox). Nothing tells a player that a round has been resolved or that the others are waiting (no mail, push or chat message), which matters most for "play in a busy week".
+0. **No match with real people has been played yet.** The server itself runs for real since 11 Nov 2026 (Proxmox LXC behind Nginx Proxy Manager, installed with `deploy/install.sh`); `proxmox-lxc.sh` and the Dockerfile have still not been run. Not confirmed: that the server sees the visitors' own addresses through the proxy (`"you"` in `api/health`). Nothing tells a player that a round has been resolved or that the others are waiting (no mail, push or chat message), which matters most for "play in a busy week".
 1. **Balance is a first pass.** Only AI-vs-AI tested. Watch: early infantry rushes right after the ceasefire, Pagten's lightning tower, artillery.
 2. **Playback leaks hidden information.** The client receives the full pre-round snapshot (the shroud is applied when drawing). Fine among friends; fix by recording per-team keyframes on the server.
 3. Not ported from v66 yet: mines, the A-bomb, the shared fortress, snow maps, PWA service worker.

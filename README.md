@@ -122,7 +122,9 @@ docker run -d --name eagleeye --restart unless-stopped -p 8080:8080 -v eagleeye-
 
 ### How far the installation has been tested
 
-The one-line install, fetched from GitHub, has been run from start to finish in clean Debian 12 and Debian 13 systems (Node 24 from NodeSource and Debian's own Node 20), including an update and an update blocked by a local edit. A stand-in played systemd's part there; the unit file itself passes `systemd-analyze verify`. Not run yet: the service under real systemd in an LXC, `proxmox-lxc.sh` and the `Dockerfile`.
+The one-line install runs on a real Proxmox host: an unprivileged Debian container behind Nginx Proxy Manager with HTTPS (11 Nov 2026). Before that it was run in clean Debian 12 and Debian 13 systems (Node 24 from NodeSource and Debian's own Node 20), including an update and an update blocked by a local edit. Not run yet: `proxmox-lxc.sh` (the script that also makes the container) and the `Dockerfile`.
+
+The `perl: warning: Setting locale failed` lines that a fresh container prints during the install are harmless.
 
 ## Sound
 

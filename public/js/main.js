@@ -23,7 +23,7 @@ const st = { be: null, v: null, mode: 'menu', scene: null, ps: null, occ: null, 
 // ---------- small UI helpers ----------
 let toastT = 0;
 function toast(msg, bad) { const t = $('#toast'); t.textContent = msg; t.className = bad ? 'bad' : ''; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); if (bad) sfx('error'); }
-function modal(html) { $('#modalBox').innerHTML = html; $('#modal').hidden = false; }
+function modal(html) { st.comm = false; $('#modalBox').innerHTML = html; $('#modal').hidden = false; }
 function closeModal() { $('#modal').hidden = true; st.comm = false; }
 function splash(big, small, ms = 1500) { const s = $('#splash'); s.innerHTML = `<b>${esc(big)}<small>${esc(small || '')}</small></b>`; s.hidden = false; setTimeout(() => s.hidden = true, ms); }
 function show(id) { for (const s of $$('.screen')) s.hidden = s.id !== id; }
@@ -253,7 +253,7 @@ setInterval(async () => {
   if (!st.be || st.be.kind !== 'remote' || !st.v || st.busy || document.hidden) return;
   if (st.mode !== 'plan' && st.mode !== 'lobby') return;
   try { const v = await st.be.state(st.v.rev); if (v) applyView(v); } catch {}
-}, 7000);
+}, 4000);
 
 function focusHome() {
   const m = me(); if (!m || !m.buildings.length) { R.cam.x = st.v.map.n / 2; R.cam.y = st.v.map.n / 2; return; }

@@ -20,7 +20,7 @@ PORT=8090 DATA_DIR=/var/lib/eagleeye-commander node server/server.js
 
 - Matches are plain JSON files in the data folder, one per invite code, plus `secret.key` (signs login tokens). Back up by copying the folder. Neither belongs in git (`.gitignore` keeps `data/` out).
 - Deadlines are checked once a minute, so rounds resolve even when nobody has the page open.
-- `npm test` plays AI-only matches headless and prints each round (`node tools/selftest.mjs <bots> <rounds> <seed>`).
+- `npm test` plays AI-only matches headless and prints each round (`node tools/selftest.mjs <bots> <rounds> <seed> <map>`).
 
 ## Install on Proxmox
 
@@ -126,6 +126,16 @@ The one-line install runs on a real Proxmox host: an unprivileged Debian contain
 
 The `perl: warning: Setting locale failed` lines that a fresh container prints during the install are harmless.
 
+## Matches
+
+- **Front page.** The browser keeps a login for every match it has taken part in. The front page lists them ("Dine kampe", with "Din tur" when the others wait for you) and the open matches that still look for generals ("Åbne kampe"). A match can also be private: then it is only reachable through the invite code or link.
+- **Lobby.** The host chooses the map, the landscape, the start money, how alliances work, the round deadline, the ceasefire and whether the match is listed. A small picture shows the map as it will be with the generals who have joined so far; "Nyt kort" rolls a new random map. The lobby has a chat.
+- **Maps.** `Tilfældigt` is generated from a seed. `Korsvejen` (open country with roads to the middle), `Voldgraven` (a ring-shaped river with a bridge for every base and fords between them) and `Bjergpasset` (ridges with one pass between neighbours) are the same every time and alike for every player. Landscapes (green, snow, desert) only change the look.
+- **Bridges** can be shot down: give an attack group the bridge as its target. Whoever stands on it is lost. Anyone can pay to have a fallen bridge rebuilt while planning. Every base can always reach the middle through a ford.
+- **Neutral buildings** lie on every map: depots (money after each battle), lookout towers (sight) and field workshops (mend nearby units). They cannot be destroyed. An **engineer** from the barracks takes one over by walking in: send him with a group whose target is close to the building. The enemy's engineer can take it back.
+- **Alliances.** Either the teams from the lobby are fixed, or alliances can be offered and accepted during the match and ended again, with one battle's notice or at once, as the host chose. Allies see each other's bases and troops, do not shoot each other and win together. An alliance can hold at most half of the generals who are still in the match. AI generals do not make pacts.
+- **Chat** during the match is under the speech bubble in the top bar, to everybody or to allies only.
+
 ## Sound
 
 - **Effects and music** are synthesised in the browser by `public/js/audio.js`; there are no audio files for them. The three marches are written as patterns in the `SONGS` table.
@@ -149,18 +159,18 @@ The `perl: warning: Setting locale failed` lines that a fresh container prints d
 | Path | Contents |
 |---|---|
 | `public/shared/defs.js` | All balance: buildings, units, damage table, economy |
-| `public/shared/map.js` | Map generator (terrain, start positions, ore) |
+| `public/shared/map.js` | Map generator: random maps and the three fixed ones, start positions, ore, bridges, neutral buildings |
 | `public/shared/sim.js` | Deterministic round simulation: path finding, combat, harvesting, vision |
-| `public/shared/engine.js` | Rules: lobby, power, placement, actions, round resolution, what each player may see |
+| `public/shared/engine.js` | Rules: lobby and match options, power, placement, actions, alliances, chat, round resolution, what each player may see |
 | `public/shared/ai.js` | AI generals (same actions as humans) |
 | `public/js/toon.js` | Cartoon sprite factory: models built from boxes, cylinders and tubes; materials, shading, palettes, damage |
 | `public/js/render.js` | Terrain painting, sprites, shroud, effects, radar |
-| `public/js/main.js` | The whole UI: menu, lobby, sidebar, orders, playback, settings panel |
+| `public/js/main.js` | The whole UI: front page, lobby, sidebar, orders, chat and alliances, playback, settings panel |
 | `public/js/settings.js` | The player's settings (sound, graphics, controls), stored in the browser |
 | `public/js/audio.js` | Sound effects, music synthesiser and voice playback |
 | `public/audio/voices.mp3` | All spoken lines in one file (made by `tools/make_voices.py`) |
 | `public/js/backend.js` | Server play and offline play behind one interface |
-| `server/server.js` | HTTP server, storage, login |
+| `server/server.js` | HTTP server, storage (matches that nobody uses leave the memory), login, the list for the front page |
 | `deploy/install.sh` | Installer and updater for Debian/Ubuntu (systemd service) |
 | `deploy/proxmox-lxc.sh` | Makes the container on a Proxmox host and runs the installer in it |
 | `public/galleri.html` | Shows every sprite in every direction (for working on the art) |

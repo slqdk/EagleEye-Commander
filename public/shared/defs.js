@@ -5,6 +5,7 @@ export const DEFS = {
   tick: 0.1,             // seconds per simulation step
   roundSeconds: 150,     // battle time simulated per round
   startMoney: 4000,
+  moneyChoices: [2000, 4000, 8000, 12000],   // the host picks one in the lobby
   hqIncome: 300,         // field supply per round, so a wrecked player can recover
   aid: 0.35,             // rebuilding aid: share of the price of buildings lost in the round
   peaceRounds: 2,        // nobody can shoot in the first rounds (scouting is allowed)
@@ -18,6 +19,17 @@ export const DEFS = {
   guardRange: 11,        // home units engage enemies this close to their post
   startArmy: { inf: 5, rkt: 2 },
   ore: { value: 50, cellMax: 12, cap: 10, rate: 1, unload: 3, regrow: 1, spread: 0.03 },
+  bridge: { name: 'Bro', hp: 3000, cost: 800 },   // only shot at on purpose: an attack group whose target is the bridge
+  capRange: 8,           // an engineer walks into a neutral building this close to his group's target
+  // Neutral buildings lie on the map from the start (2x2). Nobody can shoot them; an engineer takes them over.
+  neutral: {
+    depot: { name: 'Forsyningsdepot', sight: 4, income: 400, desc: 'Giver ejeren 400 ekstra efter hvert slag.' },
+    tower: { name: 'Udkigstårn', sight: 13, desc: 'Ser langt ud over slagmarken for ejeren og hans allierede.' },
+    shop:  { name: 'Feltværksted', sight: 4, heal: 0.04, range: 5, desc: 'Reparerer og plejer ejerens og de allieredes enheder i nærheden under slaget.' },
+  },
+  maps: { random: 'Tilfældigt', kors: 'Korsvejen', grav: 'Voldgraven', pas: 'Bjergpasset' },
+  themes: { grass: 'Grønt', snow: 'Sne', desert: 'Ørken' },
+  diplo: { fixed: 'Faste hold', notice: 'Pagter med varsel', free: 'Pagter uden varsel' },
 
   factions: {
     A: { name: 'Alliancen', desc: 'Hurtige og præcise. Lang rækkevidde, lettere panser.' },
@@ -95,6 +107,8 @@ export const DEFS = {
             weapon: { w: 'he', dmg: 28, cd: 1.6, range: 3, splash: 0.7 }, desc: 'Kaster håndgranater. God mod grupper og bygninger.' },
     flm:  { name: 'Flammekaster', f: 'P', cost: 300, hp: 65, speed: 0.9, cls: 'inf', r: 0.2, sight: 5, from: 'bar', needs: ['bar', 'ref'],
             weapon: { w: 'fire', dmg: 20, cd: 0.5, range: 2, splash: 0.8 }, desc: 'Kort rækkevidde. Rydder infanteri og bygninger.' },
+    eng:  { name: 'Ingeniør', f: 'AP', cost: 500, hp: 45, speed: 1.0, cls: 'inf', r: 0.2, sight: 4, from: 'bar', needs: ['bar'], eng: true,
+            desc: 'Ubevæbnet. Send ham med en angrebsgruppe: han går ind i en neutral bygning nær målet og overtager den.' },
     jeep: { name: 'Spejdervogn', f: 'A', cost: 500, hp: 150, speed: 2.6, cls: 'light', r: 0.4, sight: 9, from: 'fac', needs: ['fac'],
             weapon: { w: 'mg', dmg: 12, cd: 0.35, range: 4 }, desc: 'Lynhurtig med maskingevær. Ser langt og kan ramme fly.' },
     lt:   { name: 'Let kampvogn', f: 'A', cost: 700, hp: 300, speed: 2.0, cls: 'heavy', r: 0.42, sight: 6, from: 'fac', needs: ['fac'],

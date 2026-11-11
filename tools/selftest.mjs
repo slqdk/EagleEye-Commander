@@ -1,14 +1,15 @@
 // Plays whole AI-only matches headless and prints what happened. Run: npm test
+//   node tools/selftest.mjs <bots> <rounds> <seed> <map: random|kors|grav|pas>
 import { newGame, addBot, startGame, resolveRound, buildSnapshot, powerState } from '../public/shared/engine.js';
 import { createSim } from '../public/shared/sim.js';
 
-const bots = +process.argv[2] || 4, rounds = +process.argv[3] || 25, seed = +process.argv[4] || 12345;
-const g = newGame({ name: 'Selvtest', seed, roundHours: 0 });
+const bots = +process.argv[2] || 4, rounds = +process.argv[3] || 25, seed = +process.argv[4] || 12345, kind = process.argv[5] || 'random';
+const g = newGame({ name: 'Selvtest', seed, roundHours: 0, map: kind });
 for (let i = 0; i < bots; i++) addBot(g);
 g.players[0].kind = 'human';   // keeps the match going until a real winner is found
 g.players[0].kind = 'ai';
 startGame(g, 0);
-console.log('kort', g.map.n + 'x' + g.map.n, 'start', g.map.starts.map(s => s.x + ',' + s.y).join(' '));
+console.log('kort', kind, g.map.n + 'x' + g.map.n, 'start', g.map.starts.map(s => s.x + ',' + s.y).join(' '), 'broer', g.bridges.length, 'neutrale', g.neut.map(q => q.t).join(','));
 
 // determinism: the same snapshot must give the same result twice
 const s0 = buildSnapshot(g), r1 = JSON.stringify(createSim(s0).run()), r2 = JSON.stringify(createSim(JSON.parse(JSON.stringify(s0))).run());
@@ -35,4 +36,6 @@ for (let r = 1; r <= rounds && g.phase === 'play'; r++) {
     console.log(`  ${p.name.padEnd(15)} ${p.faction} $${String(p.money).padStart(6)} +${String(rep.income || 0).padStart(5)}  byg ${String(p.buildings.length).padStart(2)}  strøm ${ps.use}/${ps.prod}  hær ${JSON.stringify(p.army)}  tab ${JSON.stringify(rep.lost || {})} bLost ${rep.bLost || 0} kills ${rep.killed || 0}`);
   }
 }
+const owner = id => (g.players.find(p => p.id === id) || { name: '-' }).name;
+console.log('neutrale:', g.neut.map(q => q.t + '=' + owner(q.o)).join('  ') || 'ingen', ' broer:', g.bridges.map(b => b.hp).join(',') || 'ingen');
 console.log('fase:', g.phase, 'vinder:', JSON.stringify(g.winner), 'JSON-størrelse:', JSON.stringify(g).length);

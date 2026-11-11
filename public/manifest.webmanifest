@@ -1,0 +1,1 @@
+{ "name": "EagleEye Commander", "short_name": "EagleEye", "start_url": ".", "display": "standalone", "orientation": "any", "background_color": "#1b2129", "theme_color": "#1b2129", "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }] }

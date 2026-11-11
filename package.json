@@ -1,0 +1,11 @@
+{
+  "name": "eagleeye-commander",
+  "version": "2.3.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node tools/selftest.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

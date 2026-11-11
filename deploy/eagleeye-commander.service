@@ -1,0 +1,20 @@
+# EagleEye Commander — systemd unit. deploy/install.sh installs it (and fills in other paths if you chose any).
+[Unit]
+Description=EagleEye Commander game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=eagleeye
+Group=eagleeye
+WorkingDirectory=/opt/eagleeye-commander
+Environment=NODE_ENV=production
+Environment=PORT=8080
+Environment=DATA_DIR=/var/lib/eagleeye-commander
+ExecStart=/usr/bin/env node server/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

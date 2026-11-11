@@ -1,0 +1,323 @@
+// EagleEye Commander — rules: lobby, economy, building, training, orders and round resolution.
+// Pure functions on a plain game object, so the same code runs on the server and in offline play.
+import { DEFS } from './defs.js';
+import { generateMap } from './map.js';
+import { createSim, dockOf } from './sim.js';
+import { mulberry32, hashStr, packBits, unpackBits, oreToArr, oreToStr, stamp } from './util.js';
+import { aiTurn } from './ai.js';
+
+export class GameError extends Error {}
+const fail = m => { throw new GameError(m); };
+const BD = DEFS.buildings, UD = DEFS.units;
+const BOTS = ['Oberst Krag', 'Major Holm', 'General Brandt', 'Kaptajn Vinter', 'Oberst Steen'];
+
+export const teamKey = p => p.team ? 'T' + p.team : 'P' + p.id;
+export const allied = (a, b) => teamKey(a) === teamKey(b);
+
+// ---------- lobby ----------
+export function newGame({ name, seed, roundHours = 24, peace = DEFS.peaceRounds, now = 0 }) {
+  return { v: 2, name, seed: seed >>> 0, phase: 'lobby', round: 0, deadline: 0, opts: { roundHours, peace }, nextId: 1, host: 0,
+    players: [], map: null, ore: '', last: null, winner: null, rev: 1, created: now };
+}
+export function addPlayer(game, { name, kind = 'human', faction = 'A', team = 0, auth = null }) {
+  if (game.phase !== 'lobby') fail('Kampen er allerede i gang.');
+  if (game.players.length >= 6) fail('Kampen er fuld (højst 6 generaler).');
+  name = String(name || '').trim().slice(0, 20); if (!name) fail('Skriv et navn.');
+  if (game.players.some(p => p.name.toLowerCase() === name.toLowerCase())) fail('Navnet er allerede taget.');
+  if (!DEFS.factions[faction]) faction = 'A';
+  let color = 0; while (game.players.some(p => p.color === color)) color++;
+  const p = { id: game.nextId++, name, kind, faction, team: team | 0, color, money: 0, buildings: [], army: {}, orders: [], ready: false,
+    explored: '', known: {}, alive: true, trained: {}, stats: { killed: 0, lost: 0, bKilled: 0, bLost: 0, income: 0 }, report: null, auth };
+  game.players.push(p);
+  if (!game.host && kind === 'human') game.host = p.id;
+  game.rev++;
+  return p;
+}
+export function addBot(game, faction) {
+  const name = BOTS.find(b => !game.players.some(p => p.name === b)) || 'General ' + (game.players.length + 1);
+  const f = faction || (game.players.filter(p => p.faction === 'P').length < game.players.filter(p => p.faction === 'A').length ? 'P' : 'A');
+  return addPlayer(game, { name, kind: 'ai', faction: f });
+}
+export function startGame(game, now) {
+  if (game.phase !== 'lobby') fail('Kampen er allerede i gang.');
+  const k = game.players.length; if (k < 2) fail('Der skal mindst to generaler til en kamp.');
+  const map = generateMap(game.seed, k), n = map.n, R = mulberry32(game.seed ^ 0x5bd1e995);
+  game.map = { n, t: map.t, starts: map.starts }; game.ore = oreToStr(map.ore);
+  const slots = map.starts.map((_, i) => i);
+  for (let i = slots.length - 1; i > 0; i--) { const j = (R() * (i + 1)) | 0; [slots[i], slots[j]] = [slots[j], slots[i]]; }
+  game.players.forEach((p, i) => {
+    const s = map.starts[slots[i]]; p.slot = slots[i];
+    p.buildings = [{ id: game.nextId++, t: 'hq', x: s.x - 1, y: s.y - 1, hp: BD.hq.hp }];
+    p.money = DEFS.startMoney; p.army = { ...DEFS.startArmy }; p.alive = true; p.ready = false;
+    const e = new Uint8Array(n * n); stamp(e, n, s.x, s.y, BD.hq.sight + 2); p.explored = packBits(e);
+  });
+  game.phase = 'play'; game.round = 1; setDeadline(game, now); game.rev++;
+}
+function setDeadline(game, now) { game.deadline = game.opts.roundHours > 0 ? Math.round(now + game.opts.roundHours * 3600) : 0; }
+export const peaceLeft = game => Math.max(0, game.opts.peace - game.round + 1);
+
+// ---------- economy ----------
+// Power works as in v66: buildings get power in the order they were built; the newest switch off first.
+export function powerState(p) {
+  let prod = 0, use = 0; const off = {};
+  for (const b of p.buildings) { const pw = BD[b.t].power; if (pw > 0) prod += pw; }
+  for (const b of [...p.buildings].sort((a, b) => a.id - b.id)) { const pw = BD[b.t].power; if (pw >= 0) continue; use -= pw; if (use > prod) off[b.id] = 1; }
+  return { prod, use, off };
+}
+export const hasOn = (p, t, ps) => p.buildings.some(b => b.t === t && !ps.off[b.id]);
+export const armySize = p => Object.values(p.army).reduce((s, n) => s + n, 0);
+// free pads for aircraft
+export function airRoom(p, ps) {
+  const pads = p.buildings.filter(b => b.t === 'air' && !ps.off[b.id]).length * DEFS.padsPerAirfield;
+  return pads - Object.entries(p.army).reduce((s, [t, n]) => s + (UD[t] && UD[t].air ? n : 0), 0);
+}
+export const armyValue = army => Object.entries(army).reduce((s, [t, n]) => s + (UD[t] ? UD[t].cost * n : 0), 0);
+export function harvCount(p, ps) { return p.buildings.filter(b => b.t === 'ref' && !ps.off[b.id]).length ? p.buildings.filter(b => b.t === 'ref' && !ps.off[b.id]).length + (p.army.harv | 0) : 0; }
+
+// Why a player cannot build / train a type right now ('' if they can).
+export function buildBlock(p, t, ps = powerState(p)) {
+  const d = BD[t]; if (!d || !d.f.includes(p.faction)) return 'Ukendt bygning.';
+  const hq = p.buildings.some(b => b.t === 'hq');
+  if (d.only === 'nohq') return hq ? 'Du har allerede en kommandocentral.' : '';
+  if (!hq) return 'Uden kommandocentral kan du ikke bygge. Genopbyg den først.';
+  for (const nd of d.needs || []) if (!hasOn(p, nd, ps)) return 'Kræver ' + BD[nd].name.toLowerCase() + ' med strøm.';
+  return '';
+}
+export function trainBlock(p, t, ps = powerState(p)) {
+  const d = UD[t]; if (!d || !d.f.includes(p.faction)) return 'Ukendt enhed.';
+  for (const nd of d.needs || []) if (!hasOn(p, nd, ps)) return 'Kræver ' + BD[nd].name.toLowerCase() + ' med strøm.';
+  return '';
+}
+
+// ---------- placement ----------
+// occ: 1 where nothing can be built (terrain, ore, buildings, refinery gates).
+export function makeOcc(map, ore, buildings) {
+  const n = map.n, occ = new Uint8Array(n * n), T = map.t;
+  for (let i = 0; i < occ.length; i++) if (T[i] !== '.' || ore[i] !== '0') occ[i] = 1;
+  for (const b of buildings) {
+    const d = BD[b.t];
+    for (let y = b.y; y < b.y + d.h; y++) for (let x = b.x; x < b.x + d.w; x++) occ[y * n + x] = 2;
+    if (b.t === 'ref') { const [dx, dy] = dockOf(b); if (dx >= 0 && dy >= 0 && dx < n && dy < n && !occ[dy * n + dx]) occ[dy * n + dx] = 3; }
+  }
+  return occ;
+}
+export function placeBlock(occ, n, own, t, x, y) {
+  const d = BD[t];
+  if (x < 1 || y < 1 || x + d.w > n - 1 || y + d.h > n - 1) return 'Uden for kortet.';
+  for (let yy = y; yy < y + d.h; yy++) for (let xx = x; xx < x + d.w; xx++) if (occ[yy * n + xx]) return 'Kan ikke placeres her.';
+  if (t === 'ref') { const dy = y + d.h, dx = x + 1; if (dy >= n - 1 || occ[dy * n + dx]) return 'Porten mod syd skal være fri.'; }
+  let near = false;
+  for (const b of own) {
+    const bd = BD[b.t]; if (bd.wall && !d.wall) continue;
+    const gx = Math.max(b.x - (x + d.w), x - (b.x + bd.w), 0), gy = Math.max(b.y - (y + d.h), y - (b.y + bd.h), 0);
+    if (Math.max(gx, gy) <= DEFS.buildGap) { near = true; break; }
+  }
+  return near ? '' : 'For langt fra dine bygninger.';
+}
+const allBuildings = game => game.players.flatMap(p => p.alive ? p.buildings : []);
+const occOf = game => makeOcc(game.map, game.ore, allBuildings(game));
+
+function reveal(game, p, cx, cy, r) {
+  const n = game.map.n, e = unpackBits(p.explored, n * n); stamp(e, n, cx, cy, r); p.explored = packBits(e);
+}
+function revealHQs(game, p) {
+  for (const q of game.players) if (q.alive && !allied(p, q)) for (const b of q.buildings) if (b.t === 'hq') { p.known[b.id] = { t: b.t, x: b.x, y: b.y, o: q.id }; reveal(game, p, b.x + 1, b.y + 1, 3); }
+}
+export const sellValue = b => Math.round(BD[b.t].cost * DEFS.sellRate * b.hp / BD[b.t].hp);
+export const repairCost = b => Math.ceil(BD[b.t].cost * DEFS.repairRate * (1 - b.hp / BD[b.t].hp));
+
+function cleanOrders(p, orders) {
+  const out = [], left = { ...p.army };
+  for (const o of (orders || []).slice(0, DEFS.maxOrders)) {
+    const units = {}; let cnt = 0;
+    for (const t in o.units || {}) {
+      if (!UD[t] || UD[t].harv) continue;
+      const c = Math.max(0, Math.min(left[t] | 0, o.units[t] | 0)); if (!c) continue;
+      units[t] = c; left[t] -= c; cnt += c;
+    }
+    const pts = (o.pts || []).slice(0, DEFS.maxPts).map(q => [q[0] | 0, q[1] | 0]), slots = {};
+    for (const t in o.slots || {}) {
+      if (!units[t] || !Array.isArray(o.slots[t])) continue;
+      const l = [...new Set(o.slots[t].map(i => i | 0))].filter(i => i >= 0 && i < (p.army[t] | 0)).slice(0, units[t]);
+      if (l.length) slots[t] = l;
+    }
+    out.push(Object.keys(slots).length ? { units, pts, slots } : { units, pts });
+  }
+  return out;
+}
+
+// ---------- actions ----------
+export function act(game, pid, a, now = 0) {
+  const p = game.players.find(q => q.id === pid); if (!p) fail('Ukendt spiller.');
+  const host = game.host === p.id;
+  if (game.phase === 'lobby') {
+    if (a.a === 'faction') { if (!DEFS.factions[a.f]) fail('Ukendt fraktion.'); p.faction = a.f; }
+    else if (a.a === 'team') p.team = Math.max(0, Math.min(3, a.team | 0));
+    else if (a.a === 'addBot') { if (!host) fail('Kun værten kan tilføje AI.'); addBot(game, a.f); }
+    else if (a.a === 'botSet') { if (!host) fail('Kun værten.'); const b = game.players.find(q => q.id === a.id && q.kind === 'ai'); if (b) { if (DEFS.factions[a.f]) b.faction = a.f; if (a.team != null) b.team = Math.max(0, Math.min(3, a.team | 0)); } }
+    else if (a.a === 'kick') { if (!host) fail('Kun værten.'); const i = game.players.findIndex(q => q.id === a.id && q.kind === 'ai'); if (i >= 0) game.players.splice(i, 1); }
+    else if (a.a === 'opts') { if (!host) fail('Kun værten.'); if (a.roundHours != null) game.opts.roundHours = Math.max(0, Math.min(168, +a.roundHours || 0)); if (a.peace != null) game.opts.peace = Math.max(0, Math.min(10, a.peace | 0)); }
+    else if (a.a === 'start') { if (!host) fail('Kun værten kan starte kampen.'); startGame(game, now); }
+    else fail('Kampen er ikke startet endnu.');
+    game.rev++; return;
+  }
+  if (game.phase !== 'play') fail('Kampen er slut.');
+  if (a.a === 'force') { if (!host) fail('Kun værten.'); resolveRound(game, now); return; }
+  if (!p.alive) fail('Du er slået ud af kampen.');
+  const ps = powerState(p);
+  switch (a.a) {
+    case 'build': {
+      const why = buildBlock(p, a.t, ps); if (why) fail(why);
+      const d = BD[a.t], cells = d.wall && Array.isArray(a.cells) ? a.cells.slice(0, 40) : [[a.x, a.y]];
+      const occ = occOf(game), n = game.map.n; let placed = 0;
+      for (const [x, y] of cells) {
+        if (p.money < d.cost) { if (!placed) fail('Utilstrækkelige midler.'); break; }
+        const r = placeBlock(occ, n, p.buildings, a.t, x | 0, y | 0); if (r) { if (cells.length === 1) fail(r); continue; }
+        p.money -= d.cost;
+        const b = { id: game.nextId++, t: a.t, x: x | 0, y: y | 0, hp: d.hp }; p.buildings.push(b); placed++;
+        for (let yy = b.y; yy < b.y + d.h; yy++) for (let xx = b.x; xx < b.x + d.w; xx++) occ[yy * n + xx] = 2;
+        reveal(game, p, b.x + d.w / 2, b.y + d.h / 2, d.sight);
+        if (a.t === 'rad') revealHQs(game, p);
+      }
+      if (!placed) fail('Kan ikke placeres her.');
+      break;
+    }
+    case 'sell': {
+      const i = p.buildings.findIndex(b => b.id === a.id); if (i < 0) fail('Bygningen findes ikke.');
+      const b = p.buildings[i];
+      if (!BD[b.t].wall && p.buildings.filter(q => !BD[q.t].wall).length <= 1) fail('Du kan ikke sælge din sidste bygning.');
+      p.money += sellValue(b); p.buildings.splice(i, 1);
+      p.orders = cleanOrders(p, p.orders);
+      break;
+    }
+    case 'repair': {
+      const list = a.id ? p.buildings.filter(b => b.id === a.id) : p.buildings.filter(b => b.hp < BD[b.t].hp).sort((x, y) => (BD[x.t].wall ? 1 : 0) - (BD[y.t].wall ? 1 : 0));
+      let did = false;
+      for (const b of list) {
+        const c = repairCost(b); if (c <= 0) continue;
+        if (p.money >= c) { p.money -= c; b.hp = BD[b.t].hp; did = true; }
+        else if (p.money > 0) { b.hp = Math.min(BD[b.t].hp, Math.round(b.hp + (BD[b.t].hp - b.hp) * p.money / c)); p.money = 0; did = true; break; }
+      }
+      if (!did) fail(list.length ? 'Utilstrækkelige midler.' : 'Intet at reparere.');
+      break;
+    }
+    case 'train': {
+      const why = trainBlock(p, a.t, ps); if (why) fail(why);
+      const d = UD[a.t], c = Math.max(1, Math.min(20, a.n | 0));
+      if (d.air && c > airRoom(p, ps)) fail('Flyvepladsen er fuld. Hver flyveplads har plads til ' + DEFS.padsPerAirfield + ' fly.');
+      if (armySize(p) + c > DEFS.unitCap) fail('Hæren er fuld (højst ' + DEFS.unitCap + ' enheder).');
+      if (p.money < d.cost * c) fail('Utilstrækkelige midler.');
+      p.money -= d.cost * c; p.army[a.t] = (p.army[a.t] | 0) + c; p.trained[a.t] = (p.trained[a.t] | 0) + c;
+      break;
+    }
+    case 'untrain': {
+      const d = UD[a.t]; if (!d) fail('Ukendt enhed.');
+      const c = Math.min(a.n | 0 || 1, p.trained[a.t] | 0, p.army[a.t] | 0); if (c <= 0) fail('Kun enheder trænet i denne runde kan fortrydes.');
+      p.army[a.t] -= c; p.trained[a.t] -= c; p.money += d.cost * c; if (!p.army[a.t]) delete p.army[a.t];
+      p.orders = cleanOrders(p, p.orders);
+      break;
+    }
+    case 'orders': {
+      const n = game.map.n;
+      for (const o of a.orders || []) for (const q of o.pts || []) if (!(q[0] >= 0 && q[1] >= 0 && q[0] < n && q[1] < n)) fail('Ruten ligger uden for kortet.');
+      p.orders = cleanOrders(p, a.orders);
+      break;
+    }
+    case 'ready': p.ready = !!a.on; break;
+    default: fail('Ukendt handling.');
+  }
+  game.rev++;
+}
+
+// Resolve when every living human is ready, or when the deadline has passed.
+export function maybeResolve(game, now) {
+  if (game.phase !== 'play') return false;
+  const humans = game.players.filter(p => p.alive && p.kind === 'human');
+  const all = humans.length > 0 && humans.every(p => p.ready);
+  if (all || (game.deadline && now >= game.deadline)) { resolveRound(game, now); return true; }
+  return false;
+}
+
+export function buildSnapshot(game) {
+  return {
+    map: game.map, ore: game.ore, seed: hashStr(game.seed + ':' + game.round), round: game.round, peace: peaceLeft(game) > 0, duration: DEFS.roundSeconds,
+    players: game.players.filter(p => p.alive).map(p => {
+      const ps = powerState(p);
+      return { id: p.id, name: p.name, team: teamKey(p), faction: p.faction, color: p.color, explored: p.explored, harv: harvCount(p, ps),
+        buildings: p.buildings.map(b => ({ id: b.id, t: b.t, x: b.x, y: b.y, hp: b.hp, off: ps.off[b.id] ? 1 : 0 })),
+        army: { ...p.army }, orders: p.orders.filter(o => o.pts.length && Object.keys(o.units).length) };
+    }),
+  };
+}
+
+export function resolveRound(game, now = 0) {
+  const R = mulberry32(hashStr(game.seed + ':ai:' + game.round));
+  for (const p of game.players) if (p.alive && p.kind === 'ai') { try { aiTurn(game, p, R); } catch (e) { if (!(e instanceof GameError)) throw e; } }
+  const snap = buildSnapshot(game), res = createSim(snap).run();
+  const dead = new Set(res.dead), out = [], n = game.map.n;
+  const byId = new Map(game.players.map(p => [p.id, p]));
+  snap.players.forEach((sp, i) => {
+    const p = byId.get(sp.id), r = res.players[i];
+    const aid = Math.round(DEFS.aid * p.buildings.reduce((v, b) => v + (dead.has(b.id) && !BD[b.t].wall ? BD[b.t].cost : 0), 0));
+    p.buildings = p.buildings.filter(b => !dead.has(b.id));
+    for (const b of p.buildings) if (res.hp[b.id] != null) b.hp = Math.min(BD[b.t].hp, res.hp[b.id]);
+    let lostValue = 0; const lost = {};
+    for (const t in r.lost) {
+      let c = r.lost[t];
+      if (t === 'harv') c = Math.max(0, c - (sp.harv - (p.army.harv | 0)));   // refinery harvesters are replaced for free
+      c = Math.min(c, p.army[t] | 0); if (!c) continue;
+      p.army[t] -= c; if (!p.army[t]) delete p.army[t]; lost[t] = c; lostValue += UD[t].cost * c;
+    }
+    const income = r.income + DEFS.hqIncome + aid;
+    p.money += income; p.explored = r.explored;
+    p.stats.killed += r.killed; p.stats.lost += lostValue; p.stats.bKilled += r.bKilled; p.stats.bLost += r.bLost; p.stats.income += income;
+    p.report = { round: game.round, income: r.income, supply: DEFS.hqIncome, aid, lost, lostValue, killed: r.killed, bLost: r.bLost, bKilled: r.bKilled };
+    p.seenNow = r.seen;
+    p.orders = []; p.ready = false; p.trained = {};
+  });
+  // what everybody now knows about enemy buildings
+  const where = new Map(); for (const p of game.players) if (p.alive) for (const b of p.buildings) where.set(b.id, { t: b.t, x: b.x, y: b.y, o: p.id });
+  for (const p of game.players) {
+    for (const id of p.seenNow || []) if (where.has(id)) p.known[id] = where.get(id);
+    delete p.seenNow;
+    for (const id in p.known) if (!where.has(+id)) delete p.known[id];
+  }
+  // ore grows back a little
+  const ore = oreToArr(res.ore), occ = makeOcc(game.map, '0'.repeat(n * n), allBuildings(game)), OD = DEFS.ore, add = [];
+  for (let c = 0; c < ore.length; c++) {
+    if (!ore[c]) continue;
+    if (ore[c] < OD.cellMax) ore[c] = Math.min(OD.cellMax, ore[c] + OD.regrow);
+    if (ore[c] >= 6 && R() < OD.spread * 4) { const k = (R() * 4) | 0, x = (c % n) + [1, -1, 0, 0][k], y = ((c / n) | 0) + [0, 0, 1, -1][k]; if (x > 0 && y > 0 && x < n - 1 && y < n - 1 && !ore[y * n + x] && !occ[y * n + x]) add.push(y * n + x); }
+  }
+  for (const c of add) ore[c] = 2;
+  game.ore = oreToStr(ore);
+  // eliminations and victory
+  for (const p of game.players) {
+    if (p.alive && !p.buildings.some(b => !BD[b.t].wall)) { p.alive = false; p.army = {}; p.buildings = []; out.push(p.name); }
+  }
+  for (const p of game.players) for (const id in p.known) { const k = p.known[id], o = byId.get(k.o); if (!o || !o.alive) delete p.known[id]; }
+  const alive = game.players.filter(p => p.alive), teamsAlive = [...new Set(alive.map(teamKey))];
+  game.last = { round: game.round, snap, out };
+  if (teamsAlive.length <= 1 || !alive.some(p => p.kind === 'human')) {
+    game.phase = 'over'; game.winner = { team: teamsAlive[0] || null, names: teamsAlive.length === 1 ? alive.map(p => p.name) : [] };
+    if (teamsAlive.length > 1) { const best = [...alive].sort((a, b) => b.stats.killed - a.stats.killed)[0]; game.winner = { team: teamKey(best), names: alive.filter(p => allied(p, best)).map(p => p.name) }; }
+  }
+  game.round++; setDeadline(game, now); game.rev++;
+}
+
+// ---------- what a player gets to see ----------
+export function view(game, pid, now = 0) {
+  const me = game.players.find(p => p.id === pid);
+  const pub = p => ({ id: p.id, name: p.name, kind: p.kind, faction: p.faction, color: p.color, team: p.team, alive: p.alive, ready: p.ready, stats: p.stats });
+  const strip = p => { const { auth, ...rest } = p; return rest; };
+  return {
+    rev: game.rev, name: game.name, code: game.code || '', phase: game.phase, round: game.round, deadline: game.deadline, opts: game.opts, host: game.host,
+    peaceLeft: game.phase === 'play' ? peaceLeft(game) : 0, winner: game.winner, now,
+    map: game.map, ore: game.ore,
+    me: me ? strip(me) : null,
+    players: game.players.map(pub),
+    allies: me && game.map ? game.players.filter(p => p !== me && p.alive && allied(p, me)).map(p => ({ id: p.id, buildings: p.buildings, army: p.army })) : [],
+    last: game.last ? { round: game.last.round, out: game.last.out } : null,
+  };
+}
+export const replayOf = game => game.last ? game.last.snap : null;

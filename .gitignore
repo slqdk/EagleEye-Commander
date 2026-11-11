@@ -1,0 +1,8 @@
+# match data and the key that signs logins never belong in the repository
+data/
+node_modules/
+dist/
+tools/__pycache__/
+tools/dbg.mjs
+*.log
+.DS_Store

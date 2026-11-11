@@ -240,6 +240,8 @@ function applyView(v, first) {
     else { chatBadge(); if (fresh.length) { const m = fresh[fresh.length - 1], p = v.players.find(q => q.id === m.from); toast((p ? p.name + ': ' : '') + m.text); } }
   }
   st.orders = JSON.parse(JSON.stringify(v.me ? v.me.orders : []));
+  // straight into a match from the front page: the last battle may be played back before the base has been drawn even once
+  if (first && v.me) { st.ps = powerState(v.me); st.knownPrev = new Set(Object.keys(v.me.known).map(Number)); }
   if (!st.cam0) { st.cam0 = true; focusHome(); R.cam.z = Math.min(64, Math.max(28, R.w / 30)); }
   const resolved = prev && prev.phase !== 'lobby' && v.round > prev.round;
   const unseen = first && v.last && +(LS.get(seenKey()) || 0) < v.last.round;
@@ -353,7 +355,8 @@ function renderBanner() {
 // ---------- sidebar ----------
 const camEls = new Map();
 function renderSide() {
-  const v = st.v, m = v.me, ps = st.ps; if (!m) return;
+  const v = st.v, m = v.me; if (!m) return;
+  const ps = st.ps || (st.ps = powerState(m));
   $('#side').classList.toggle('off', st.mode !== 'plan' || !m.alive || v.phase !== 'play');
   $('#side').dataset.tab = st.tab;
   const mk = (kind, t, d, why, cnt, minus) => `<button class="cameo ${why ? 'locked' : ''} ${!why && m.money < d.cost ? 'poor' : ''}" data-k="${kind}:${t}"><img src="${cameoURL(t, m.faction, m.color)}" alt="" draggable="false"><span class="cost">${d.cost}</span>${cnt ? `<span class="cnt">${cnt}</span>` : ''}<span class="st"></span><i class="wipe"></i><span class="nm">${d.name}</span>${minus ? `<span class="minus" data-minus="${t}">−</span>` : ''}</button>`;

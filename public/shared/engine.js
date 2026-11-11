@@ -70,7 +70,7 @@ export function startGame(game, now) {
   const k = game.players.length; if (k < 2) fail('Der skal mindst to generaler til en kamp.');
   const map = generateMap(game.seed, k, game.opts.map), n = map.n, R = mulberry32(game.seed ^ 0x5bd1e995);
   game.map = { n, t: map.t, starts: map.starts }; game.ore = oreToStr(map.ore);
-  game.bridges = map.bridges.map(b => ({ id: game.nextId++, x: b.x, y: b.y, w: b.w, h: b.h, cells: b.cells, hp: DEFS.bridge.hp }));
+  game.bridges = map.bridges.map(b => ({ id: game.nextId++, x: b.x, y: b.y, w: b.w, h: b.h, cells: b.cells, a: b.a, hp: DEFS.bridge.hp }));
   game.neut = map.neutrals.map(q => ({ id: game.nextId++, t: q.t, x: q.x, y: q.y, o: 0 }));
   const slots = map.starts.map((_, i) => i);
   for (let i = slots.length - 1; i > 0; i--) { const j = (R() * (i + 1)) | 0; [slots[i], slots[j]] = [slots[j], slots[i]]; }

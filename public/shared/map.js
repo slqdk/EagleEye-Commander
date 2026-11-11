@@ -32,7 +32,7 @@ export function generateMap(seed, k, kind = 'random') {
   const t = new Array(N).fill('.'), ore = new Uint8Array(N);
   const at = (x, y) => y * n + x, inb = (x, y) => x >= 0 && y >= 0 && x < n && y < n;
   const cx = n / 2, cy = n / 2, ring = n * 0.36, sector = Math.PI * 2 / k;
-  const decks = [];          // bridge candidates: lists of cells, settled at the very end
+  const decks = [];          // bridge candidates: { cells, a: the direction the road runs }, settled at the very end
   const nf = noise(seed + 1), nf2 = noise(seed + 2), nr = noise(seed + 3), nw = noise(seed + 4);
   let a0;
 
@@ -73,7 +73,7 @@ export function generateMap(seed, k, kind = 'random') {
         const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
         if (t[at(x, y)] === 'w' && dx * ux + dy * uy > 0 && Math.abs(dx * uy - dy * ux) < 1.05) cells.push(at(x, y));
       }
-      decks.push(cells);
+      decks.push({ cells, a });
     }
   } else {
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
@@ -99,7 +99,7 @@ export function generateMap(seed, k, kind = 'random') {
       for (const q of [cross[0], cross[2]]) {
         const c = course(q), cells = [];
         for (const i of [q, q + 1]) for (let w = -1; w <= 1; w++) { const x = horiz ? i : c + w, y = horiz ? c + w : i; if (inb(x, y)) cells.push(at(x, y)); }
-        decks.push(cells);
+        decks.push({ cells, a: horiz ? Math.PI / 2 : 0 });
       }
     }
     a0 = R() * Math.PI * 2;
@@ -196,7 +196,7 @@ export function generateMap(seed, k, kind = 'random') {
 
   // bridges: a deck that still lies in water and has land at both ends stays a bridge, anything else becomes a ford
   const bridges = [];
-  for (const cells of decks) {
+  for (const { cells, a } of decks) {
     const wet = cells.filter(c => t[c] === 'w'), land = new Set();
     for (const c of wet) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const X = (c % n) + dx, Y = ((c / n) | 0) + dy;
@@ -207,7 +207,7 @@ export function generateMap(seed, k, kind = 'random') {
     if (wet.length < 4 || wet.length !== cells.length || far < 4) { for (const c of wet) t[c] = 'b'; continue; }
     let x0 = n, y0 = n, x1 = 0, y1 = 0;
     for (const c of wet) { x0 = Math.min(x0, c % n); x1 = Math.max(x1, c % n); y0 = Math.min(y0, (c / n) | 0); y1 = Math.max(y1, (c / n) | 0); }
-    bridges.push({ x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, cells: wet });
+    bridges.push({ x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, cells: wet, a: Math.round(a * 1000) / 1000 });
   }
 
   // every start must reach the centre without a bridge: carve a track where it cannot

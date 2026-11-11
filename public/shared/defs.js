@@ -23,9 +23,9 @@ export const DEFS = {
   capRange: 8,           // an engineer walks into a neutral building this close to his group's target
   // Neutral buildings lie on the map from the start (2x2). Nobody can shoot them; an engineer takes them over.
   neutral: {
-    depot: { name: 'Forsyningsdepot', sight: 4, income: 400, desc: 'Giver ejeren 400 ekstra efter hvert slag.' },
-    tower: { name: 'Udkigstårn', sight: 13, desc: 'Ser langt ud over slagmarken for ejeren og hans allierede.' },
-    shop:  { name: 'Feltværksted', sight: 4, heal: 0.04, range: 5, desc: 'Reparerer og plejer ejerens og de allieredes enheder i nærheden under slaget.' },
+    depot: { name: 'Forsyningsdepot', w: 2, h: 2, sight: 4, income: 400, desc: 'Giver ejeren 400 ekstra efter hvert slag.' },
+    tower: { name: 'Udkigstårn', w: 2, h: 2, sight: 13, desc: 'Ser langt ud over slagmarken for ejeren og hans allierede.' },
+    shop:  { name: 'Feltværksted', w: 2, h: 2, sight: 4, heal: 0.04, range: 5, desc: 'Reparerer og plejer ejerens og de allieredes enheder i nærheden under slaget.' },
   },
   maps: { random: 'Tilfældigt', kors: 'Korsvejen', grav: 'Voldgraven', pas: 'Bjergpasset' },
   themes: { grass: 'Grønt', snow: 'Sne', desert: 'Ørken' },

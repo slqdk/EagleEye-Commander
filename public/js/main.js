@@ -1,15 +1,16 @@
 // EagleEye Commander — the client: menu, lobby, base building, attack planning and battle playback.
 import { DEFS } from '../shared/defs.js';
 import { powerState, buildBlock, trainBlock, makeOcc, placeBlock, hasOn, harvCount, sellValue, repairCost } from '../shared/engine.js';
-import { createSim, musterPositions, dockOf, assignGroups } from '../shared/sim.js';
+import { createSim, musterPositions, dockOf, assignGroups, bridgeAt } from '../shared/sim.js';
+import { generateMap } from '../shared/map.js';
 import { unpackBits, stamp } from '../shared/util.js';
-import { Renderer, GROUP_COL } from './render.js';
+import { Renderer, GROUP_COL, landFor } from './render.js';
 import { cameo, sprite, TURRET, OUT, setStyle } from './toon.js';
 import { sfx, say, unitSay, unlock, music, songNames } from './audio.js';
 import { cfg, setCfg, resetCfg, onCfg } from './settings.js';
-import { Remote, Local, LS } from './backend.js';
+import { Remote, Local, LS, Tokens } from './backend.js';
 
-const BD = DEFS.buildings, UD = DEFS.units;
+const BD = DEFS.buildings, UD = DEFS.units, ND = DEFS.neutral, BN = { ...BD, ...ND };
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = n => Math.round(n).toLocaleString('da-DK');
@@ -17,13 +18,13 @@ const TOUCH = matchMedia('(pointer: coarse)').matches, MOUSE = matchMedia('(any-
 const R = new Renderer($('#map'));
 const st = { be: null, v: null, mode: 'menu', scene: null, ps: null, occ: null, ed: { mode: 'idle' }, sel: null, prod: { b: null, u: [] }, orders: [], editG: -1,
   rp: null, moneyShown: 0, knownPrev: new Set(), skew: 0, tab: 'B', busy: false, cam0: false, selU: new Set(), box: null, lastU: null, hoverG: -1,
-  bAnim: new Map(), sold: [], tweenOK: false, radarWas: null, radarT0: null };
+  bAnim: new Map(), sold: [], tweenOK: false, radarWas: null, radarT0: null, selBr: null, comm: false };
 
 // ---------- small UI helpers ----------
 let toastT = 0;
 function toast(msg, bad) { const t = $('#toast'); t.textContent = msg; t.className = bad ? 'bad' : ''; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); if (bad) sfx('error'); }
 function modal(html) { $('#modalBox').innerHTML = html; $('#modal').hidden = false; }
-function closeModal() { $('#modal').hidden = true; }
+function closeModal() { $('#modal').hidden = true; st.comm = false; }
 function splash(big, small, ms = 1500) { const s = $('#splash'); s.innerHTML = `<b>${esc(big)}<small>${esc(small || '')}</small></b>`; s.hidden = false; setTimeout(() => s.hidden = true, ms); }
 function show(id) { for (const s of $$('.screen')) s.hidden = s.id !== id; }
 const cameoCache = new Map();
@@ -47,14 +48,42 @@ function fillPick() {
     box.dataset.f = cur;
   }
 }
+let hubOn = false, hubData = null, setOnlineMode = null;
+const sameTeam = (a, b) => a.id === b.id || (!!a.team && a.team === b.team);
+const DIPLO_HELP = { fixed: 'Holdene vælges her i lobbyen og ligger fast hele kampen.', notice: 'Alliancer kan indgås undervejs. Et brud skal varsles og gælder først efter næste slag.', free: 'Alliancer kan indgås og brydes når som helst, også lige før et slag.' };
+// The front page lists: the matches this browser has a login for, and the open ones that wait for generals.
+async function refreshHub() {
+  if (!hubOn || st.mode !== 'menu' || document.hidden) return;
+  let d; try { d = await Remote.list(); } catch { return; }
+  if (st.mode !== 'menu') return;
+  const left = t => { const sec = Math.max(0, t - d.now), h = Math.floor(sec / 3600); return h >= 24 ? Math.floor(h / 24) + ' d ' + (h % 24) + ' t' : h + ' t ' + String(Math.floor(sec % 3600 / 60)).padStart(2, '0') + ' m'; };
+  const status = m => m.phase === 'lobby' ? ['Venter på start', ''] : m.phase === 'over' ? [m.winner && m.winner.length ? 'Slut · ' + m.winner.join(' og ') + ' vandt' : 'Slut', 'over'] : !m.alive ? ['Du er slået ud', 'over']
+    : m.turn ? ['Din tur', 'turn'] : [m.waiting.length ? 'Venter på ' + m.waiting.join(', ') : 'Slaget er på vej', ''];
+  const mine = d.mine.map(m => { const [txt, cls] = status(m); return `<div class="mrow"><div><b>${esc(m.name)}</b><small>${m.phase === 'lobby' ? 'Lobby' : 'Runde ' + m.round} · ${esc(m.players.join(', '))} · du er ${esc(m.you)}${m.phase === 'play' && m.deadline ? ' · kamp senest om ' + left(m.deadline) : ''}</small></div><span class="tagc ${cls}">${esc(txt)}</span><span class="row"><button class="btn small ${m.turn ? 'go' : ''}" data-open="${m.i}">Åbn</button>${m.phase === 'over' ? `<button class="xbtn" data-drop="${m.i}" title="Fjern fra listen" aria-label="Fjern fra listen">×</button>` : ''}</span></div>`; }).join('');
+  const open = d.open.filter(o => !d.mine.some(m => m.code === o.code)).map(o => `<div class="mrow"><div><b>${esc(o.name)}</b><small>${esc(o.host)} er vært · ${o.players.length} af 6: ${esc(o.players.join(', '))} · ${DEFS.maps[o.opts.map]} · startkapital ${fmt(o.opts.money)}</small></div><span></span><span class="row"><button class="btn small" data-join="${esc(o.code)}">Deltag</button></span></div>`).join('');
+  const el = $('#hub'); hubData = d;
+  el.innerHTML = (mine ? `<div class="card"><h2>Dine kampe</h2>${mine}</div>` : '') + (open ? `<div class="card"><h2>Åbne kampe</h2>${open}</div>` : '');
+  el.hidden = !mine && !open;
+}
+$('#hub').onclick = async e => {
+  const b = e.target.closest('button'); if (!b || !hubData) return; unlock();
+  const m = hubData.mine.find(x => String(x.i) === (b.dataset.open ?? b.dataset.drop));
+  if (b.dataset.open != null && m) { try { const be = new Remote(m.token); enter(be, await be.state(-1)); } catch (err) { Remote.prototype.leave.call(null); toast(err.message, true); refreshHub(); } }
+  else if (b.dataset.drop != null && m) { Tokens.drop(m.token); refreshHub(); }
+  else if (b.dataset.join && setOnlineMode) { setOnlineMode('join'); const f = $('#onlineForm'); f.querySelector('[name=code]').value = b.dataset.join; f.scrollIntoView({ behavior: 'smooth', block: 'center' }); f.querySelector('[name=name]').focus({ preventScroll: true }); }
+};
+setInterval(refreshHub, 20000);
 function initMenu() {
   fillPick();
+  const opts = (o, cur) => Object.entries(o).map(([k, n]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${n}</option>`).join('');
+  $('#quickForm [name=map]').innerHTML = opts(DEFS.maps, 'random'); $('#quickForm [name=theme]').innerHTML = opts(DEFS.themes, 'grass');
+  $('#quickForm [name=money]').innerHTML = DEFS.moneyChoices.map(m => `<option value="${m}" ${m === DEFS.startMoney ? 'selected' : ''}>${fmt(m)}</option>`).join('');
   for (const box of $$('.fpick')) box.onclick = e => { const b = e.target.closest('button'); if (!b) return; box.dataset.f = b.dataset.f; for (const x of box.children) x.classList.toggle('on', x === b); sfx('click'); };
   $('#btnSet0').onclick = () => { unlock(); showSettings(); };
   $('#quickForm').onsubmit = e => {
     e.preventDefault(); unlock();
     const f = new FormData(e.target), faction = e.target.querySelector('.fpick').dataset.f, bots = +f.get('bots');
-    const be = Local.create({ name: String(f.get('name')).trim() || 'General', faction, bots });
+    const be = Local.create({ name: String(f.get('name')).trim() || 'General', faction, bots, map: f.get('map'), theme: f.get('theme'), money: +f.get('money') });
     enter(be);
   };
   const saved = Local.load();
@@ -63,6 +92,7 @@ function initMenu() {
   let mode = 'create';
   const setMode = m => { mode = m; for (const b of $('#onlineSeg').children) b.classList.toggle('on', b.dataset.m === m); for (const el of $$('#onlineForm [data-for]')) el.hidden = !el.dataset.for.split(' ').includes(m); $('#onlineBtn').textContent = { create: 'Opret kamp', join: 'Deltag', login: 'Log ind' }[m]; };
   $('#onlineSeg').onclick = e => { const b = e.target.closest('button'); if (b) setMode(b.dataset.m); };
+  setOnlineMode = setMode;
   $('#onlineForm').onsubmit = async e => {
     e.preventDefault(); unlock(); $('#onlineErr').textContent = '';
     const f = new FormData(e.target), body = { game: f.get('game'), code: String(f.get('code') || '').toUpperCase().trim(), name: f.get('name'), pin: f.get('pin'), faction: e.target.querySelector('.fpick').dataset.f };
@@ -73,46 +103,122 @@ function initMenu() {
     $('#onlineForm').hidden = false; setMode('create');
     const code = new URLSearchParams(location.search).get('kode');
     if (code) { setMode('join'); $('#onlineForm [name=code]').value = code.toUpperCase(); }
-    const tok = LS.get('jf2-token');
-    if (tok && !code) { try { const be = new Remote(tok), v = await be.state(-1); if (v && st.mode === 'menu') enter(be, v); } catch { LS.del('jf2-token'); } }
+    hubOn = true;
+    const cur = Remote.current();      // the match that was open in this tab before the page was loaded again
+    if (cur && !code) { try { const be = new Remote(cur), v = await be.state(-1); if (v && st.mode === 'menu') return enter(be, v); } catch { Remote.prototype.leave.call(null); } }
+    refreshHub();
   });
 }
 async function enter(be, v) {
   st.be = be; st.v = null; st.rp = null; st.cam0 = false; st.knownPrev = new Set(); st.tweenOK = false; st.radarWas = null; st.radarT0 = null; st.bAnim.clear(); st.sold = []; music.setLevel(0);
   applyView(v || await be.state(-1), true);
 }
-function leave() { closeModal(); music.setLevel(0); st.tweenOK = false; if (st.be) st.be.leave(); st.be = null; st.v = null; st.rp = null; st.scene = null; st.mode = 'menu'; show('menu'); const s = Local.load(); $('#btnContinue').hidden = !(s && s.game.phase === 'play'); if (s) $('#btnContinue').onclick = () => { unlock(); enter(s); }; }
+function leave() { closeModal(); music.setLevel(0); st.tweenOK = false; if (st.be) st.be.leave(); st.be = null; st.v = null; st.rp = null; st.scene = null; st.mode = 'menu'; show('menu'); const s = Local.load(); $('#btnContinue').hidden = !(s && s.game.phase === 'play'); if (s) $('#btnContinue').onclick = () => { unlock(); enter(s); }; refreshHub(); }
+
+// ---------- chat (lobby and match) ----------
+const chatKey = () => 'jf2-chat-' + st.v.code + '-' + (me() ? me().id : 0);
+function chatHTML(v, withTeam) {
+  const who = id => { const p = v.players.find(q => q.id === id); return p ? `<b style="color:${DEFS.colors[p.color].light}">${esc(p.name)}</b>` : '<b>?</b>'; };
+  const hm = t => t ? new Date(t * 1000).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' }) + ' ' : '';
+  const lines = v.chat.map(m => m.from ? `<div${m.team ? ' class="tm"' : ''}><small>${hm(m.t)}</small>${who(m.from)}${m.team ? ' <small>til allierede</small>' : ''}: ${esc(m.text)}</div>` : `<div class="sys">${esc(m.text)}</div>`).join('');
+  return `<div class="chat"><div class="chatlog" id="chatLog">${lines || '<div class="sys">Ingen beskeder endnu.</div>'}</div>
+    <form class="chatin" id="chatForm">${withTeam ? '<select id="chatTo" aria-label="Modtagere"><option value="all">Til alle</option><option value="team">Til allierede</option></select>' : ''}<input id="chatIn" maxlength="240" placeholder="Skriv en besked" autocomplete="off" aria-label="Besked"><button class="btn small" type="submit">Send</button></form></div>`;
+}
+// keep: what the box held before it was drawn again ({ val, foc, to })
+function wireChat(keep) {
+  const log = $('#chatLog'), inp = $('#chatIn'), f = $('#chatForm'); if (!f) return;
+  log.scrollTop = log.scrollHeight;
+  if (keep) { inp.value = keep.val; if (keep.to && $('#chatTo')) $('#chatTo').value = keep.to; if (keep.foc) inp.focus(); }
+  f.onsubmit = async e => {
+    e.preventDefault(); const text = inp.value.trim(); if (!text) return;
+    const to = $('#chatTo') ? $('#chatTo').value : 'all'; inp.value = '';
+    if (!await doAct({ a: 'chat', text, to })) { const i2 = $('#chatIn'); if (i2) i2.value = text; }
+    const i3 = $('#chatIn'); if (i3) i3.focus();
+  };
+  if (st.v.chat.length) LS.set(chatKey(), String(st.v.chat[st.v.chat.length - 1].id));
+  chatBadge();
+}
+const chatKeep = () => $('#chatIn') ? { val: $('#chatIn').value, foc: document.activeElement === $('#chatIn'), to: $('#chatTo') ? $('#chatTo').value : '' } : null;
+function chatBadge() {
+  const v = st.v, el = $('#chatN'); if (!v || !v.me) return;
+  const seen = +(LS.get(chatKey()) || 0), n = v.chat.filter(m => m.id > seen && m.from !== v.me.id).length;
+  el.hidden = !n; el.textContent = n > 9 ? '9+' : n;
+}
 
 // ---------- lobby ----------
+let prevKey = '', prevMap = null;
+function drawLobbyMap(cv, v) {
+  const k = Math.max(2, v.players.length), key = v.seed + '|' + k + '|' + v.opts.map;
+  if (key !== prevKey) { prevKey = key; prevMap = generateMap(v.seed, k, v.opts.map); }
+  const m = prevMap, n = m.n, g = cv.getContext('2d'), s = cv.width / n, C = landFor(cfg.palette, v.opts.theme).radar;
+  for (let i = 0; i < n * n; i++) { const c = C[m.t[i]] || C['.']; g.fillStyle = m.ore[i] ? '#f0be1e' : `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect((i % n) * s, ((i / n) | 0) * s, s + 0.5, s + 0.5); }
+  g.fillStyle = '#c9b48a'; for (const b of m.bridges) for (const c of b.cells) g.fillRect((c % n) * s, ((c / n) | 0) * s, s + 0.5, s + 0.5);
+  for (const q of m.neutrals) { g.fillStyle = '#10161c'; g.fillRect(q.x * s - 1, q.y * s - 1, 2 * s + 2, 2 * s + 2); g.fillStyle = '#f4f1e8'; g.fillRect(q.x * s, q.y * s, 2 * s, 2 * s); }
+  for (const q of m.starts) { g.beginPath(); g.arc((q.x + 0.5) * s, (q.y + 0.5) * s, s * 2.1, 0, 7); g.fillStyle = '#ff5a47'; g.strokeStyle = '#10161c'; g.lineWidth = 2; g.fill(); g.stroke(); }
+}
 function renderLobby() {
-  const v = st.v, host = v.host === v.me.id, url = location.origin + location.pathname + '?kode=' + v.code;
+  const v = st.v, host = v.host === v.me.id, url = location.origin + location.pathname + '?kode=' + v.code, o = v.opts, keep = chatKeep();
   const fsel = (p, dis) => `<select data-id="${p.id}" data-k="f" ${dis ? 'disabled' : ''}>${Object.entries(DEFS.factions).map(([f, d]) => `<option value="${f}" ${p.faction === f ? 'selected' : ''}>${d.name}</option>`).join('')}</select>`;
   const tsel = (p, dis) => `<select data-id="${p.id}" data-k="t" ${dis ? 'disabled' : ''}>${['Alle mod alle', 'Hold 1', 'Hold 2', 'Hold 3'].map((n, i) => `<option value="${i}" ${p.team === i ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+  const opt = (label, id, list, cur) => `<label>${label}${host ? `<select id="${id}">${list.map(([k, n]) => `<option value="${k}" ${String(cur) === String(k) ? 'selected' : ''}>${n}</option>`).join('')}</select>` : `<span class="ro">${(list.find(([k]) => String(k) === String(cur)) || [0, cur])[1]}</span>`}</label>`;
   $('#lobbyCard').innerHTML = `
     <h2>${esc(v.name)}</h2>
     <div class="row"><div><small style="color:var(--dim)">INVITATIONSKODE</small><div class="code">${esc(v.code)}</div></div><span class="grow"></span><button class="btn" id="lbCopy">Kopiér invitationslink</button></div>
     <div>${v.players.map(p => { const mine = p.id === v.me.id, can = mine || (host && p.kind === 'ai'); return `<div class="lrow"><i class="chip" style="background:${DEFS.colors[p.color].main}"></i><span>${esc(p.name)}${p.kind === 'ai' ? ' <small style="color:var(--dim)">AI</small>' : ''}${mine ? ' <small style="color:var(--gold)">dig</small>' : ''}</span>${fsel(p, !can)}${tsel(p, !can)}${host && p.kind === 'ai' ? `<button class="btn small warn" data-kick="${p.id}">Fjern</button>` : '<span></span>'}</div>`; }).join('')}</div>
-    ${host ? `<div class="row"><button class="btn" id="lbBot">Tilføj AI-general</button><span class="grow"></span>
-      <label style="flex-direction:row;align-items:center;gap:6px">Runde senest efter<select id="lbHours">${[[0, 'ingen frist'], [12, '12 timer'], [24, '1 døgn'], [48, '2 døgn'], [72, '3 døgn']].map(([h, n]) => `<option value="${h}" ${v.opts.roundHours === h ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
-      <label style="flex-direction:row;align-items:center;gap:6px">Våbenhvile<select id="lbPeace">${[0, 1, 2, 3, 4, 5].map(n => `<option ${v.opts.peace === n ? 'selected' : ''}>${n}</option>`).join('')}</select>runder</label></div>
-      <div class="acts"><button class="btn" id="lbLeave">Tilbage</button><button class="btn go" id="lbStart" ${v.players.length < 2 ? 'disabled' : ''}>Start kampen</button></div>`
+    <div class="lobby2"><div class="opts">
+      ${opt('Kort', 'lbMap', Object.entries(DEFS.maps), o.map)}${opt('Landskab', 'lbTheme', Object.entries(DEFS.themes), o.theme)}
+      ${opt('Startkapital', 'lbMoney', DEFS.moneyChoices.map(m => [m, fmt(m)]), o.money)}${opt('Alliancer', 'lbDiplo', Object.entries(DEFS.diplo), o.diplo)}
+      ${opt('Runde senest efter', 'lbHours', [[0, 'ingen frist'], [12, '12 timer'], [24, '1 døgn'], [48, '2 døgn'], [72, '3 døgn']], o.roundHours)}${opt('Våbenhvile', 'lbPeace', [0, 1, 2, 3, 4, 5].map(n => [n, n + (n === 1 ? ' runde' : ' runder')]), o.peace)}
+      ${opt('På forsiden', 'lbOpen', [[1, 'Åben for alle'], [0, 'Kun med kode']], o.open ? 1 : 0)}
+    </div><div><canvas id="lbPrev" width="176" height="176" title="Kortet, som det bliver med det nuværende antal generaler"></canvas>${host && o.map === 'random' ? '<button class="btn small" id="lbSeed" style="width:100%;margin-top:6px">Nyt kort</button>' : ''}</div></div>
+    <p class="hint">${DIPLO_HELP[o.diplo]} Røde prikker er baserne, hvide felter er neutrale bygninger, som en ingeniør kan overtage.</p>
+    ${chatHTML(v, false)}
+    ${host ? `<div class="acts"><button class="btn" id="lbLeave">Tilbage</button><button class="btn" id="lbBot" ${v.players.length >= 6 ? 'disabled' : ''}>Tilføj AI-general</button><button class="btn go" id="lbStart" ${v.players.length < 2 ? 'disabled' : ''}>Start kampen</button></div>`
     : `<p class="hint">Venter på, at værten starter kampen …</p><div class="acts"><button class="btn" id="lbLeave">Tilbage</button></div>`}`;
   const C = $('#lobbyCard');
+  drawLobbyMap($('#lbPrev'), v); wireChat(keep);
   C.onchange = e => {
-    const s = e.target; if (s.id === 'lbHours') return doAct({ a: 'opts', roundHours: +s.value }); if (s.id === 'lbPeace') return doAct({ a: 'opts', peace: +s.value });
-    const id = +s.dataset.id; if (!id) return;
-    if (id === v.me.id) doAct(s.dataset.k === 'f' ? { a: 'faction', f: s.value } : { a: 'team', team: +s.value });
-    else doAct(s.dataset.k === 'f' ? { a: 'botSet', id, f: s.value } : { a: 'botSet', id, team: +s.value });
+    const el = e.target, key = { lbMap: 'map', lbTheme: 'theme', lbMoney: 'money', lbDiplo: 'diplo', lbHours: 'roundHours', lbPeace: 'peace', lbOpen: 'open' }[el.id];
+    if (key) return doAct({ a: 'opts', [key]: key === 'map' || key === 'theme' || key === 'diplo' ? el.value : +el.value });
+    const id = +el.dataset.id; if (!id) return;
+    if (id === v.me.id) doAct(el.dataset.k === 'f' ? { a: 'faction', f: el.value } : { a: 'team', team: +el.value });
+    else doAct(el.dataset.k === 'f' ? { a: 'botSet', id, f: el.value } : { a: 'botSet', id, team: +el.value });
   };
   C.onclick = e => {
-    const b = e.target.closest('button'); if (!b) return; unlock();
+    const b = e.target.closest('button'); if (!b || b.type === 'submit') return; unlock();
     if (b.id === 'lbCopy') { navigator.clipboard?.writeText(url); toast('Link kopieret'); }
     else if (b.id === 'lbBot') doAct({ a: 'addBot' });
+    else if (b.id === 'lbSeed') doAct({ a: 'reseed' });
     else if (b.dataset.kick) doAct({ a: 'kick', id: +b.dataset.kick });
     else if (b.id === 'lbStart') doAct({ a: 'start' });
     else if (b.id === 'lbLeave') leave();
   };
 }
+
+// ---------- alliances and messages during the match ----------
+function showComm() {
+  const v = st.v, m = v.me; if (!m) return;
+  const keep = st.comm ? chatKeep() : null, play = v.phase === 'play' && m.alive, pacts = v.opts.diplo !== 'fixed';
+  const mates = v.players.filter(p => p.alive && p.id !== m.id && sameTeam(p, m));
+  const row = p => {
+    const mineOffer = v.offers.some(q => q.from === m.id && q.to === p.id), theirs = v.offers.some(q => q.from === p.id && q.to === m.id);
+    const act = !p.alive ? '<small>slået ud</small>' : sameTeam(p, m) ? '<span class="tagc turn">Allieret</span>' : !play || !pacts ? '' : p.kind === 'ai' ? '<small>indgår ikke pagter</small>'
+      : theirs ? `<button class="btn small go" data-ally="${p.id}">Tag imod</button><button class="btn small" data-unally="${p.id}">Afvis</button>`
+      : mineOffer ? `<small>tilbud sendt</small><button class="btn small" data-unally="${p.id}">Træk tilbage</button>` : `<button class="btn small" data-ally="${p.id}">Tilbyd alliance</button>`;
+    return `<div class="dip"><i class="chip" style="background:${DEFS.colors[p.color].main}"></i><span>${esc(p.name)}${p.kind === 'ai' ? ' <small>AI</small>' : ''}${p.leaving ? ' <small style="color:var(--gold)">har opsagt sin alliance</small>' : ''}${theirs ? ' <small style="color:var(--gold)">tilbyder dig en alliance</small>' : ''}</span><span class="row">${act}</span></div>`;
+  };
+  modal(`<h2>Beskeder og alliancer</h2>
+    <div>${v.players.filter(p => p.id !== m.id).map(row).join('')}</div>
+    ${mates.length && pacts && play ? `<div class="row" style="margin-top:8px">${m.leaving ? '<span class="hint">Du har opsagt alliancen. Den ophører efter næste slag.</span>' : `<button class="btn small warn" id="cmLeave">${v.opts.diplo === 'free' ? 'Bryd alliancen nu' : 'Opsig alliancen'}</button>`}</div>` : ''}
+    <p class="hint">${DIPLO_HELP[v.opts.diplo]}${pacts ? ' Allierede ser hinandens baser og tropper og skyder ikke på hinanden. De vinder sammen.' : ''}</p>
+    ${chatHTML(v, mates.length > 0)}
+    <div class="acts"><button class="btn go" id="cmClose">Luk</button></div>`);
+  st.comm = true; wireChat(keep);
+  $('#cmClose').onclick = closeModal;
+  if ($('#cmLeave')) $('#cmLeave').onclick = () => doAct({ a: 'leave' });
+  $('#modalBox').onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.ally) doAct({ a: 'ally', id: +b.dataset.ally }); else if (b.dataset.unally) doAct({ a: 'unally', id: +b.dataset.unally }); };
+}
+$('#btnChat').onclick = () => { unlock(); showComm(); };
 
 // ---------- talking to the game ----------
 async function doAct(a, quiet) {
@@ -124,7 +230,13 @@ function applyView(v, first) {
   if (!v) return;
   const prev = st.v; st.v = v; st.skew = v.now ? v.now - Date.now() / 1000 : 0;
   if (v.phase === 'lobby') { st.mode = 'lobby'; show('lobby'); renderLobby(); return; }
-  show('game'); R.resize(); R.setMap(v.map);
+  show('game'); R.resize(); R.setMap(v.map, v.opts.theme);
+  $('#btnChat').hidden = st.be.kind !== 'remote' || !v.me;
+  if (st.be.kind === 'remote' && v.me) {      // a word about new messages, and the open panel follows along
+    const last = prev && prev.chat && prev.chat.length ? prev.chat[prev.chat.length - 1].id : first ? 1e9 : 0, fresh = v.chat.filter(m => m.id > last && m.from !== v.me.id);
+    if (st.comm && !$('#modal').hidden) showComm();
+    else { chatBadge(); if (fresh.length) { const m = fresh[fresh.length - 1], p = v.players.find(q => q.id === m.from); toast((p ? p.name + ': ' : '') + m.text); } }
+  }
   st.orders = JSON.parse(JSON.stringify(v.me ? v.me.orders : []));
   if (!st.cam0) { st.cam0 = true; focusHome(); R.cam.z = Math.min(64, Math.max(28, R.w / 30)); }
   const resolved = prev && prev.phase !== 'lobby' && v.round > prev.round;
@@ -159,7 +271,8 @@ function rebuild() {
   if (m.alive) for (const b of m.buildings) add(b, m.id, !!st.ps.off[b.id], false);
   for (const a of v.allies) { const ps = powerState(a); for (const b of a.buildings) add(b, a.id, !!ps.off[b.id], false); }
   for (const id in m.known) { const k = m.known[id]; if (!friends.has(k.o)) add({ id: +id, t: k.t, x: k.x, y: k.y }, k.o, false, true); }
-  st.occ = makeOcc(v.map, v.ore, B);
+  st.occ = makeOcc(v.map, v.ore, B, v.neut);
+  for (const q of v.neut) B.push({ id: q.id, t: q.t, x: q.x, y: q.y, hp: 1, mhp: 1, o: q.o, neutral: true, sel: st.sel === q.id });
   for (const g of st.sold) B.push(g);   // buildings that are still sinking into the ground after being sold
   const free = (x, y) => x >= 0 && y >= 0 && x < n && y < n && (T[y * n + x] === '.' || T[y * n + x] === 'b') && st.occ[y * n + x] < 2;
   let uid = 1;
@@ -175,7 +288,7 @@ function rebuild() {
   };
   if (m.alive) muster(m, st.ps, true);
   for (const a of v.allies) muster(a, powerState(a), false);
-  for (const b of B) if (!b.ghost && !b.gone) { const d = BD[b.t]; stamp(vis, n, b.x + d.w / 2, b.y + d.h / 2, d.sight + (d.w > 2 ? 1 : 0)); }
+  for (const b of B) if (!b.ghost && !b.gone && (!b.neutral || friends.has(b.o))) { const d = BN[b.t]; stamp(vis, n, b.x + d.w / 2, b.y + d.h / 2, d.sight + (d.w > 2 ? 1 : 0)); }
   for (const u of Us) stamp(vis, n, u.x, u.y, UD[u.t].sight);
   for (let i = 0; i < vis.length; i++) if (vis[i]) explored[i] = 1;
   st.knownPrev = new Set(Object.keys(m.known).map(Number));
@@ -199,7 +312,7 @@ function rebuild() {
   const radarOn = hasOn(m, 'rad', st.ps);
   if (radarOn && st.radarWas === false && st.tweenOK) { st.radarT0 = tnow; sfx('powerup'); }
   st.radarWas = radarOn; st.tweenOK = true;
-  st.scene = { buildings: B, units: Us, ore: v.ore, fog: m.alive || v.phase !== 'over' ? { explored, vis, key: 'p' + v.rev + ':' + st.orders.length } : null, colors, mine: o => friends.has(o),
+  st.scene = { buildings: B, units: Us, ore: v.ore, bridges: v.bridges.map(b => ({ ...b, sel: st.selBr === b.id })), fog: m.alive || v.phase !== 'over' ? { explored, vis, key: 'p' + v.rev + ':' + st.orders.length } : null, colors, mine: o => friends.has(o),
     radarOn, radarT0: st.radarT0, showGroups: true, overlay: planOverlay, hq: B.find(b => b.t === 'hq' && b.o === m.id) };
   if (v.phase === 'over' || !m.alive) st.scene.radarOn = true;
   renderTop(); renderSide(); renderInfo(); renderOrders(); renderBanner();
@@ -343,7 +456,7 @@ async function confirmPlace() {
 }
 function setTool(mode) { unlock(); if (st.mode !== 'plan') return; const on = st.ed.mode === mode; cancelEdit(); if (!on) { st.ed = { mode }; $('#map').className = mode; st.sel = null; st.selU.clear(); rebuild(); } renderSide(); renderBanner(); sfx('click'); }
 $('#mRepair').onclick = () => setTool('repair'); $('#mSell').onclick = () => setTool('sell');
-const buildingAt = (cx, cy) => st.scene.buildings.find(b => !b.gone && cx >= b.x && cy >= b.y && cx < b.x + BD[b.t].w && cy < b.y + BD[b.t].h);
+const buildingAt = (cx, cy) => st.scene.buildings.find(b => !b.gone && cx >= b.x && cy >= b.y && cx < b.x + BN[b.t].w && cy < b.y + BN[b.t].h);
 
 async function sellBuilding(id) {
   const m = me(), b = m.buildings.find(q => q.id === id); if (!b) return;
@@ -385,8 +498,28 @@ function renderInfo() {
     if ($('#inHome')) $('#inHome').onclick = standDown;
     return;
   }
+  const br = st.selBr != null && st.mode === 'plan' && st.v.bridges.find(q => q.id === st.selBr);
+  if (br) {
+    const down = !(br.hp > 0), k = br.hp / DEFS.bridge.hp;
+    el.hidden = false;
+    el.innerHTML = `<h3>${down ? 'Sprængt bro' : 'Bro'}<button class="btn small" id="inX">Luk</button></h3>
+      ${down ? '' : `<div class="hp"><i style="width:${k * 100}%;background:${k > 0.5 ? 'var(--go)' : k > 0.25 ? 'var(--gold)' : 'var(--bad)'}"></i></div>`}
+      <p>${down ? 'Broen er væk. Landtropper må over et vadested, indtil nogen bygger den op igen.' : 'Den korte vej over vandet. En angrebsgruppe, der får broen som mål, skyder den i stykker, og hvem der end står på den, går tabt.'}</p>
+      ${down && me().alive && st.v.phase === 'play' ? `<div class="row"><button class="btn small gold" id="inBr">Genopbyg (${fmt(DEFS.bridge.cost)})</button></div>` : ''}`;
+    $('#inX').onclick = () => { st.selBr = null; rebuild(); };
+    if ($('#inBr')) $('#inBr').onclick = () => doAct({ a: 'rebridge', id: br.id }).then(ok => { if (ok) { sfx('ready'); st.selBr = null; rebuild(); } });
+    return;
+  }
   const b = st.sel != null && st.scene.buildings.find(q => q.id === st.sel);
   if (!b || st.mode !== 'plan') { el.hidden = true; return; }
+  if (b.neutral) {
+    const nd = ND[b.t], holder = st.v.players.find(p => p.id === b.o);
+    el.hidden = false;
+    el.innerHTML = `<h3>${nd.name}<button class="btn small" id="inX">Luk</button></h3><div style="color:${holder ? DEFS.colors[holder.color].light : 'var(--dim)'}">${holder ? (holder.id === me().id ? 'Du holder den' : 'Holdes af ' + esc(holder.name)) : 'Neutral: ingen holder den endnu'}</div>
+      <p>${esc(nd.desc)} Den kan ikke ødelægges. En ingeniør overtager den ved at gå ind: giv ham et mål tæt på bygningen.</p>`;
+    $('#inX').onclick = () => { st.sel = null; rebuild(); };
+    return;
+  }
   const d = BD[b.t], mine = b.o === me().id, owner = st.v.players.find(p => p.id === b.o), real = mine && me().buildings.find(q => q.id === b.id);
   el.hidden = false;
   el.innerHTML = `<h3>${d.name}<button class="btn small" id="inX">Luk</button></h3>${mine ? '' : `<div style="color:${DEFS.colors[owner.color].light}">${esc(owner.name)} · ${DEFS.factions[owner.faction].name}${b.ghost ? ' · sidst set' : ''}</div>`}
@@ -536,7 +669,9 @@ function planOverlay(g, X, Y, Z, dpr) {
     g.beginPath(); g.moveTo(px + f, py - 35 * f); g.lineTo(px + 27 * f, py - 26 * f); g.lineTo(px + f, py - 17 * f); g.closePath();
     g.lineWidth = 4.5 * f; g.strokeStyle = OUT; g.stroke(); g.fillStyle = c; g.fill();
     g.font = `900 ${11 * f}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = OUT; g.fillText(String(i + 1), px + 9 * f, py - 25.5 * f);
-    const txt = n + (n === 1 ? ' enhed' : ' enheder') + (st.v.peaceLeft > 0 ? ' · spejder' : '');
+    const br = bridgeAt(st.v.bridges.filter(q => q.hp > 0), tg);
+    let cap = null; if (!br && mem.some(u => u.t === 'eng')) { let bd = DEFS.capRange; for (const q of st.v.neut) { const d = Math.hypot(q.x + 0.5 - tg[0], q.y + 0.5 - tg[1]); if (d <= bd && !st.scene.mine(q.o)) { bd = d; cap = q; } } }
+    const txt = n + (n === 1 ? ' enhed' : ' enheder') + (br ? (st.v.peaceLeft > 0 ? ' · mod broen' : ' · sprænger broen') : cap ? ' · overtager ' + ND[cap.t].name.toLowerCase() : st.v.peaceLeft > 0 ? ' · spejder' : '');
     g.font = `700 ${12 * dpr}px system-ui, sans-serif`; const w = g.measureText(txt).width + 14 * dpr, h = 19 * dpr, bx = px - w / 2, by = py + 7 * dpr;
     g.beginPath(); g.roundRect(bx, by, w, h, h / 2); g.fillStyle = 'rgba(16,21,27,.92)'; g.fill(); g.lineWidth = 2 * dpr; g.strokeStyle = on ? c : OUT; g.stroke();
     g.fillStyle = '#fff'; g.fillText(txt, px, by + h / 2 + dpr * 0.5);
@@ -617,8 +752,8 @@ function click(e) {
     return;
   }
   const b = buildingAt(cx, cy);
-  if (ed.mode === 'sell') { if (b && b.o === m.id) sellBuilding(b.id); return; }
-  if (ed.mode === 'repair') { if (b && b.o === m.id) doAct({ a: 'repair', id: b.id }).then(ok => ok && (sfx('ready'), say('repair'))); return; }
+  if (ed.mode === 'sell') { if (b && b.o === m.id && !b.neutral) sellBuilding(b.id); return; }
+  if (ed.mode === 'repair') { if (b && b.o === m.id && !b.neutral) doAct({ a: 'repair', id: b.id }).then(ok => ok && (sfx('ready'), say('repair'))); return; }
   if (ed.mode === 'route') {
     const o = st.orders[st.editG]; if (!o) return cancelEdit();
     if (o.pts.length >= DEFS.maxPts) return toast('Højst ' + DEFS.maxPts + ' punkter pr. rute. Fortryd et punkt først.', true);
@@ -635,7 +770,10 @@ function click(e) {
     const u = unitAt(wx, wy); if (u) return selectUnit(u, e);
     if (st.selU.size) { st.selU.clear(); if (!b) { rebuild(); renderSide(); return; } }   // a click elsewhere only deselects
   }
-  if (b) { st.sel = b.id; $('#orders').hidden = true; sfx('click'); rebuild(); } else if (st.sel != null) { st.sel = null; rebuild(); }
+  const br = b ? null : st.v.bridges.find(q => q.cells.includes(cy * n + cx));
+  if (b) { st.sel = b.id; st.selBr = null; $('#orders').hidden = true; sfx('click'); rebuild(); }
+  else if (br) { st.selBr = br.id; st.sel = null; $('#orders').hidden = true; sfx('click'); rebuild(); }
+  else if (st.sel != null || st.selBr != null) { st.sel = null; st.selBr = null; rebuild(); }
 }
 // radar: click or drag to move the view
 const rad = $('#radar'); let radDown = false;
@@ -678,7 +816,7 @@ async function startBattle() {
   const sim = createSim(snap), myIdx = v.me ? snap.players.findIndex(p => p.id === v.me.id) : -1, ti = myIdx >= 0 ? sim.P[myIdx].ti : -1;
   const rep = v.me && v.me.report && v.me.report.round === snap.round ? v.me.report : null;
   st.rp = { sim, snap, myIdx, ti, colors: snap.players.map(p => ({ color: p.color, faction: p.faction })), speed: cfg.replaySpeed === 'auto' ? 'auto' : +cfg.replaySpeed, acc: 0, paused: false, lastCombat: -999, cash: 0, done: false,
-    known: new Set(st.knownPrev), money0: v.me ? v.me.money - (rep ? rep.income + rep.supply + (rep.aid || 0) : 0) : 0, hold: 1.0 };
+    known: new Set(st.knownPrev), money0: v.me ? v.me.money - (rep ? rep.income + rep.supply + (rep.aid || 0) + (rep.depot || 0) : 0) : 0, hold: 1.0, own: sim.Ns.map(q => q.o) };
   R.clear(); $('#alerts').innerHTML = '';
   const mine = myIdx >= 0 && snap.players[myIdx].buildings.find(b => b.t === 'hq'); if (mine) { R.cam.x = mine.x + 1.5; R.cam.y = mine.y + 2.5; }
   $('#replaybar').hidden = false; renderReplayBar(); renderTop(); $('#side').classList.add('off');
@@ -711,11 +849,17 @@ function handleEvents(rp, fxOn) {
       if (onScreen(e.x, e.y)) sfx(e.k === 'bd' ? 'bigboom' : e.c === 'inf' ? 'mg' : 'boom', 0.9);
     } else if (e.k === 'c') { if (e.o === rp.myIdx) { rp.cash += e.v; if (fxOn) { sfx('cash'); R.event(e); } } }
     else if (e.k === 'a') { if (e.o === rp.myIdx) { R.event(e); if (fxOn) { sfx('alert'); say(e.h ? 'harv' : 'attack'); } addAlert(e.h ? 'Malmhøster under angreb' : 'Basen er under angreb', e.x, e.y); } }
+    else if (e.k === 'cap') {      // a neutral building changed hands
+      const was = rp.own[e.i], mine = o => o >= 0 && (rp.ti < 0 ? false : sim.P[o].ti === rp.ti); rp.own[e.i] = e.o;
+      if (fxOn && (see(e.x, e.y) || mine(e.o))) { R.event(e); if (onScreen(e.x, e.y)) sfx('ready'); }
+      if (mine(e.o)) addAlert(ND[e.t].name + ' overtaget', e.x, e.y, '⚑'); else if (mine(was)) { addAlert(ND[e.t].name + ' er taget af fjenden', e.x, e.y); if (fxOn) sfx('alert'); }
+    } else if (e.k === 'brd') { if (fxOn) { R.event(e); if (onScreen(e.x, e.y)) sfx('bigboom', 0.9); } addAlert('En bro er sprængt', e.x, e.y); }
+    else if (e.k === 'hl') { if (fxOn && see(e.x, e.y)) R.event(e); }
   }
 }
-function addAlert(txt, x, y) {
+function addAlert(txt, x, y, icon = '⚠') {
   const box = $('#alerts'); if (box.children.length >= 3) box.firstChild.remove();
-  const b = document.createElement('button'); b.className = 'alert'; b.textContent = '⚠ ' + txt + ' · vis';
+  const b = document.createElement('button'); b.className = 'alert'; b.textContent = icon + ' ' + txt + ' · vis';
   b.onclick = () => { R.cam.x = x; R.cam.y = y; b.remove(); }; box.appendChild(b); setTimeout(() => b.remove(), 9000);
 }
 function stepReplay(dt) {
@@ -732,7 +876,8 @@ function replayScene() {
   const rp = st.rp, sim = rp.sim, ti = rp.ti, seen = ti >= 0 ? sim.seen[ti] : null;
   const B = ti < 0 ? sim.Bs : sim.Bs.filter(b => sim.P[b.o].ti === ti || seen.has(b.id) || rp.known.has(b.id));
   const radar = ti < 0 || sim.Bs.some(b => b.o === rp.myIdx && b.t === 'rad' && !b.dead && !b.off);
-  st.scene = { buildings: B, units: sim.Us, ore: sim.ore, fog: ti >= 0 ? { explored: sim.explored[ti], vis: sim.vis[ti], key: 'r' + ((sim.tick / 5) | 0) } : null, colors: rp.colors,
+  const NB = sim.Ns.map(q => ({ id: q.id, t: q.t, x: q.x, y: q.y, hp: 1, mhp: 1, o: q.o, neutral: true }));
+  st.scene = { buildings: NB.length ? [...B, ...NB] : B, units: sim.Us, ore: sim.ore, bridges: sim.Brs, fog: ti >= 0 ? { explored: sim.explored[ti], vis: sim.vis[ti], key: 'r' + ((sim.tick / 5) | 0) } : null, colors: rp.colors,
     mine: o => ti < 0 || sim.P[o].ti === ti, tick: sim.tick, radarOn: radar };
 }
 function endReplay() { st.rp = null; $('#replaybar').hidden = true; $('#alerts').innerHTML = ''; R.clear(); st.mode = 'plan'; rebuild(); }
@@ -743,9 +888,9 @@ function showSummary() {
   if (v.phase === 'over') { endReplay(); return showOver(); }
   const lost = r ? Object.entries(r.lost).map(([t, c]) => c + '× ' + UD[t].name).join(', ') : '';
   modal(`<h2>Runde ${rp.snap.round}: rapport</h2>
-    ${r ? `<div class="stats"><div class="stat"><small>Malm høstet</small><b class="g">+${fmt(r.income)}</b></div><div class="stat"><small>Forsyning${r.aid ? ' + støtte' : ''}</small><b class="g">+${fmt(r.supply + (r.aid || 0))}</b></div><div class="stat"><small>Nedkæmpet for</small><b class="k">${fmt(r.killed)}</b></div>
+    ${r ? `<div class="stats"><div class="stat"><small>Malm høstet</small><b class="g">+${fmt(r.income)}</b></div><div class="stat"><small>Forsyning${r.depot ? ' + depoter' : ''}${r.aid ? ' + støtte' : ''}</small><b class="g">+${fmt(r.supply + (r.aid || 0) + (r.depot || 0))}</b></div><div class="stat"><small>Nedkæmpet for</small><b class="k">${fmt(r.killed)}</b></div>
       <div class="stat"><small>Bygninger mistet</small><b class="${r.bLost ? 'r' : ''}">${r.bLost}</b></div><div class="stat"><small>Bygninger ødelagt</small><b class="${r.bKilled ? 'k' : ''}">${r.bKilled}</b></div><div class="stat"><small>Tab i enheder</small><b class="${r.lostValue ? 'r' : ''}">${fmt(r.lostValue)}</b></div></div>
-      ${lost ? `<p>Faldne: ${lost}.</p>` : '<p>Ingen enheder gik tabt.</p>'}${r.aid ? `<p>Du har fået ${fmt(r.aid)} i genopbygningsstøtte.</p>` : ''}` : '<p>Du deltog ikke i denne runde.</p>'}
+      ${lost ? `<p>Faldne: ${lost}.</p>` : '<p>Ingen enheder gik tabt.</p>'}${r.aid ? `<p>Du har fået ${fmt(r.aid)} i genopbygningsstøtte.</p>` : ''}${r.depot ? `<p>Dine forsyningsdepoter har givet ${fmt(r.depot)}.</p>` : ''}` : '<p>Du deltog ikke i denne runde.</p>'}
     ${out.length ? `<p><b style="color:var(--bad)">Slået ud:</b> ${out.map(esc).join(', ')}</p>` : ''}
     ${m && !m.alive ? '<p><b style="color:var(--bad)">Din sidste bygning er faldet. Du er ude af kampen.</b></p>' : ''}
     <div class="acts"><button class="btn" id="smAgain">Se kampen igen</button><button class="btn go" id="smOk">Videre til runde ${v.round}</button></div>`);
@@ -776,6 +921,9 @@ function showHelp() {
     <li><b>Fly:</b> en flyveplads har plads til fire fly. De flyver over alt, og kun luftværn, raketsoldater og maskingeværer kan ramme dem.</li>
     <li><b>Klar til kamp:</b> når alle er klar, afvikles runden. Hærene kører hen over kortet og kæmper selv, og du ser det hele bagefter.</li>
     <li>Enheder, der ikke er i en gruppe, bliver hjemme og forsvarer basen. Overlevende vender hjem efter hver runde.</li>
+    <li><b>Neutrale bygninger:</b> depoter giver penge efter hvert slag, udkigstårne ser langt, og feltværksteder plejer dine enheder i nærheden. Træn en <b>ingeniør</b> i kasernen, og send ham af sted med et mål tæt på bygningen, så går han ind og overtager den. Fjendens ingeniør kan tage den tilbage.</li>
+    <li><b>Broer:</b> klik på en bro for at se den. Giv en gruppe broen som mål, så skyder den broen i stykker. En sprængt bro kan bygges op igen for penge; der er altid et vadested et andet sted.</li>
+    <li><b>Beskeder og alliancer:</b> taleboblen øverst åbner chatten, og dér tilbyder og opsiger du også alliancer, hvis kampen tillader det.</li>
     <li><b>Indstillinger:</b> lyd, grafik og styring ændrer du under tandhjulet øverst til venstre.</li></ul>
     <h4>Styring</h4><p>Mus: venstre knap markerer, højre knap (eller piletaster/WASD) flytter kortet (kan byttes om i indstillingerne), hjulet zoomer, dobbeltklik vælger alle af samme slags, Shift lægger til. Mobil: træk for at flytte, knib for at zoome. Højreklik eller Esc annullerer · H hopper hjem · klik på radaren for at springe.</p>
     <div class="acts"><button class="btn go" id="hpOk">Forstået</button></div>`);
@@ -784,7 +932,7 @@ function showHelp() {
 $('#btnMenu').onclick = () => {
   unlock(); const v = st.v, host = v.host === (v.me && v.me.id), remote = st.be.kind === 'remote';
   modal(`<h2>${esc(v.name)}</h2>${remote ? `<p>Invitationskode: <b style="color:var(--gold);letter-spacing:.1em">${esc(v.code)}</b></p>` : ''}${standings()}
-    <div class="acts"><button class="btn" id="mnSet">Indstillinger</button><button class="btn" id="mnHelp">Hjælp</button>${v.last ? '<button class="btn" id="mnReplay">Se sidste kamp igen</button>' : ''}${host && remote && v.phase === 'play' ? '<button class="btn warn" id="mnForce">Afvikl runden nu</button>' : ''}<button class="btn warn" id="mnLeave">${remote ? 'Log ud' : 'Til menuen'}</button><button class="btn go" id="mnOk">Luk</button></div>`);
+    <div class="acts"><button class="btn" id="mnSet">Indstillinger</button><button class="btn" id="mnHelp">Hjælp</button>${v.last ? '<button class="btn" id="mnReplay">Se sidste kamp igen</button>' : ''}${host && remote && v.phase === 'play' ? '<button class="btn warn" id="mnForce">Afvikl runden nu</button>' : ''}<button class="btn warn" id="mnLeave">${remote ? 'Til forsiden' : 'Til menuen'}</button><button class="btn go" id="mnOk">Luk</button></div>`);
   $('#mnOk').onclick = closeModal; $('#mnHelp').onclick = showHelp; $('#mnLeave').onclick = leave; $('#mnSet').onclick = () => showSettings();
   if ($('#mnReplay')) $('#mnReplay').onclick = () => { closeModal(); if (st.mode === 'plan') { cancelEdit(); startBattle(); } };
   if ($('#mnForce')) $('#mnForce').onclick = () => { closeModal(); doAct({ a: 'force' }); };

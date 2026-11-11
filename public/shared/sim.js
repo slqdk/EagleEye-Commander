@@ -111,7 +111,7 @@ export function createSim(snap) {
   // Bridges are decks on water cells: passable while they stand. Neutral buildings block the way but are never targets.
   const brAt = new Int16Array(N).fill(-1);
   const Brs = (snap.bridges || []).map((b, i) => {
-    const o = { id: b.id, i, x: b.x, y: b.y, w: b.w, h: b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2, cells: b.cells, hp: b.hp, mhp: D.bridge.hp,
+    const o = { id: b.id, i, x: b.x, y: b.y, w: b.w, h: b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2, cells: b.cells, a: b.a || 0, hp: b.hp, mhp: D.bridge.hp,
       dead: !(b.hp > 0), isB: true, br: true, cls: 'bld', o: -1, t: 'bridge', hit: -99 };
     for (const c of b.cells) { brAt[c] = i; if (!o.dead) blk[c] = 0; }
     return o;
@@ -124,7 +124,7 @@ export function createSim(snap) {
 
   const cellOf = (x, y) => (y | 0) * n + (x | 0);
   const inb = (x, y) => x >= 0 && y >= 0 && x < n && y < n;
-  const isFreeMuster = (x, y) => inb(x, y) && blk[y * n + x] === 0 && !docks.has(y * n + x);
+  const isFreeMuster = (x, y) => inb(x, y) && blk[y * n + x] === 0 && brAt[y * n + x] < 0 && !docks.has(y * n + x);      // nobody musters on a bridge
 
   function mkUnit(pi, t, x, y) {
     const d = D.units[t];

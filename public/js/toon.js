@@ -103,6 +103,14 @@ class Kit {
     faces.push({ p: Tp, k: m === 4 ? 'top' : 'cap' });
     return this._part(faces, col, o);
   }
+  // barrel roof: half a tube lying on its flat side, from a to b (both at the height of the eaves); o.sq flattens it
+  arch(a, b, r, col, o = {}) {
+    const n = o.n || 8, ex = norm(sub(b, a)), ey = norm([-ex[1], ex[0], 0]), sq = o.sq ?? 1;
+    const ring = c => { const q = []; for (let i = 0; i <= n; i++) { const t = i * Math.PI / n; q.push([c[0] + ey[0] * Math.cos(t) * r, c[1] + ey[1] * Math.cos(t) * r, c[2] + Math.sin(t) * r * sq]); } return q; };
+    const A = ring(a), B = ring(b), faces = [{ p: A, k: 'cap' }, { p: B, k: 'cap' }];
+    for (let i = 0; i < n; i++) faces.push({ p: [A[i], A[i + 1], B[i + 1], B[i]], k: 'side' });
+    return this._part(faces, col, { smooth: true, ...o });
+  }
   ngon(cx, cy, r, n, rot = 0) { const q = []; for (let i = 0; i < n; i++) { const a = rot + i * Math.PI * 2 / n; q.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } return q; }
   cyl(cx, cy, r, z0, h, col, o = {}) {
     const n = o.n || 12, rot = Math.PI / n;
@@ -523,8 +531,9 @@ function wreck(sp, lvl, name) {
 }
 
 // ---------- palettes ----------
+const NOBODY = { main: '#b9b3a2', dark: '#7f7a6c', light: '#e4dfd0' };      // a neutral building that nobody holds yet
 function pal(f, ci) {
-  const t = DEFS.colors[ci] || DEFS.colors[0], mil = STYLE.palette === 'military';
+  const t = DEFS.colors[ci] || (ci < 0 ? NOBODY : DEFS.colors[0]), mil = STYLE.palette === 'military';
   const c = f === 'P'
     ? { wall: '#cfa57c', wall2: '#a97d5a', roof: '#6d4a3c', metal: '#8f887b', dark: '#3a302d', glass: '#ffd76a', conc: '#a79f90', crate: '#8a6a3c', crane: '#e0a82a', trim: '#5e4a3c', bunker: '#948a6c' }
     : { wall: '#e2e5d8', wall2: '#bcc3b2', roof: '#5f7389', metal: '#9dabb8', dark: '#3a444f', glass: '#8fd6f2', conc: '#b9bcae', crate: '#b8a06a', crane: '#f0c330', trim: '#66747f', bunker: '#98a087' };
@@ -1119,6 +1128,52 @@ M.heli = (k, c, f, frame) => {
   k.box(-0.02, 0, 0.46, 1.36, 0.07, 0.02, c.dark, { yaw: a + 1.5708, ol: 0.6, bias: 1, sh: false });
 };
 
+// ---------- neutral buildings (2x2): roof and flag take the owner's colour, pale canvas while nobody holds them ----------
+M.depot = (k, c) => {      // an open store under a pitched roof on posts, with crates and drums stacked around it
+  const hi = k.hi, slab = [[-0.92, -0.8], [0.62, -0.8], [0.62, 0.4], [-0.92, 0.4]];
+  k.fr(slab, 0, slab, 0.05, c.conc, { ol: 0.7, bias: -5, sh: false });
+  for (const [x, y] of [[-0.84, -0.72], [0.54, -0.72], [0.54, 0.32], [-0.84, 0.32]]) k.box(x, y, 0.05, 0.08, 0.08, 0.6, c.wood, { ol: 0.5 });
+  k.box(-0.46, -0.3, 0.05, 0.5, 0.5, 0.34, c.crate, { ol: 0.6 }); k.box(0.12, -0.36, 0.05, 0.42, 0.42, 0.3, c.crate, { ol: 0.6 });
+  k.box(-0.42, -0.3, 0.39, 0.32, 0.32, 0.2, c.crate, { ol: 0.6 });
+  drum(k, c, 0.32, 0.12, 0.05, c.red); drum(k, c, 0.1, 0.18, 0.05, c.metal);
+  k.fr([[-1.0, -0.88], [0.7, -0.88], [0.7, 0.48], [-1.0, 0.48]], 0.65, [[-1.0, -0.22], [0.7, -0.22], [0.7, -0.18], [-1.0, -0.18]], 1.02, c.T);
+  if (hi) k.box(-0.15, -0.2, 1.01, 1.76, 0.1, 0.035, c.Td, { ol: 0.4 });
+  k.box(0.86, 0.6, 0, 0.26, 0.26, 0.24, c.crate, { ol: 0.6 });
+  for (const x of [0.28, 0.6]) k.box(x, 0.8, 0, 0.3, 0.2, 0.15, c.sand, { ol: 0.7 });
+  flag(k, c, 0.88, -0.62, 0, 1.25);
+  if (hi) { k.box(-0.62, 0.7, 0, 0.4, 0.3, 0.2, c.crate, { ol: 0.6 }); k.box(-0.58, 0.7, 0.2, 0.26, 0.22, 0.16, c.crate, { ol: 0.6 }); drum(k, c, -0.2, 0.76, 0, c.metal); lamp(k, c, -0.95, 0.56, 0, 0.75); }
+};
+M.tower = (k, c) => {      // a lookout: four braced legs, a cabin with windows all round, a pointed roof
+  const hi = k.hi, base = k.ngon(0, 0.1, 0.66, 8, Math.PI / 8);
+  k.fr(base, 0, base, 0.05, c.conc, { ol: 0.7, bias: -5, sh: false });
+  for (const [x, y] of [[-0.4, -0.3], [0.4, -0.3], [0.4, 0.5], [-0.4, 0.5]]) k.rod([x, y, 0.05], [x * 0.7, 0.1 + (y - 0.1) * 0.7, 1.2], 0.075, 0.075, c.wood, { ol: 0.5 });
+  if (hi) {
+    k.rod([-0.38, 0.5, 0.15], [0.3, 0.42, 0.8], 0.04, 0.04, c.wood, { ol: 0.35 }); k.rod([0.38, 0.5, 0.15], [-0.3, 0.42, 0.8], 0.04, 0.04, c.wood, { ol: 0.35 });
+    ladder(k, c, 0, 0.52, 0.05, 1.2);
+  }
+  k.box(0, 0.1, 1.2, 0.82, 0.82, 0.06, c.wood, { ol: 0.6 });
+  k.box(0, 0.1, 1.26, 0.68, 0.68, 0.36, c.wall, { ol: 0.7 });
+  win(k, c, 0, 0.45, 1.36, 0.46, 0.17);
+  k.fr(k.ngon(0, 0.1, 0.66, 4, Math.PI / 4), 1.62, k.ngon(0, 0.1, 0.02, 4, Math.PI / 4), 2.02, c.T);
+  mast(k, c, 0, 0.1, 2.02, 0.3, c.red);
+  flag(k, c, 0.74, 0.74, 0, 0.95);
+  if (hi) { k.box(-0.66, 0.76, 0, 0.3, 0.2, 0.15, c.sand, { ol: 0.7 }); drum(k, c, 0.5, -0.4, 0, c.metal); }
+};
+M.shop = (k, c) => {       // a field workshop: an arched hall open to the south, a hoist beside it, tyres and tools in the yard
+  const hi = k.hi;
+  k.box(-0.18, -0.2, 0, 1.3, 1.2, 0.32, c.wall2, { ol: 0.7 });
+  k.arch([-0.18, -0.82, 0.32], [-0.18, 0.42, 0.32], 0.67, c.T, { n: 9, sq: 0.8 });
+  k.box(-0.18, 0.41, 0.02, 0.84, 0.03, 0.6, c.dark, { ol: 0.5, bias: 0.3, mat: 'door' });
+  sign(k, c, -0.18, 0.44, 0.64, 0.5, 0.1, c.gold, 'hazard');
+  k.box(0.76, -0.4, 0, 0.1, 0.1, 1.05, c.crane, { ol: 0.5 });
+  k.rod([0.76, -0.4, 1.05], [0.76, 0.5, 1.05], 0.08, 0.08, c.crane, { ol: 0.5 });
+  k.rod([0.76, 0.44, 1.05], [0.76, 0.44, 0.6], 0.025, 0.025, c.dark, { ol: 0.3 });
+  k.box(0.76, 0.44, 0.46, 0.15, 0.15, 0.14, c.metal, { ol: 0.5 });
+  flag(k, c, -0.9, 0.72, 0, 1.0);
+  for (const x of [0.28, 0.5]) k.tube([x, 0.8, 0.1], [x + 0.08, 0.8, 0.1], 0.1, c.tyre, { n: 8, ol: 0.6 });
+  if (hi) { drum(k, c, 0.88, 0.8, 0, c.red); k.box(-0.56, 0.74, 0, 0.3, 0.22, 0.18, c.crate, { ol: 0.6 }); vent(k, c, -0.18, -0.55, 0.84, 0.13); }
+};
+
 export const TURRET = { lt: 'lt_t', mt: 'mt_t', ht: 'ht_t', kol: 'kol_t', jeep: 'jeep_t', tur: 'tur_t', pill: 'pill_t', flt: 'flt_t', aag: 'aag_t', sam: 'sam_t' };
 export const FRAMES = { rad: 16, coil: 2, harv: 2, ref: 2, heli: 2, hq: 8 };
 
@@ -1127,7 +1182,7 @@ function drawInf(g, S, t, c, f, dir, frame) {
   // dir: 0..7 clockwise from east. u = one "pixel" of the little soldier
   const u = S / 40, a = dir * Math.PI / 4, dx = Math.cos(a), dy = Math.sin(a), back = dy < -0.3, side = dx < -0.01 ? -1 : 1;
   const hi = STYLE.detail === 'high', mil = STYLE.palette === 'military', ow = STYLE.outline === 'thin' ? 1.0 : 1.5;
-  const skin = '#f2c9a0', helm = f === 'P' ? (mil ? '#6a563c' : '#7b5b3b') : (mil ? '#5e6b4d' : '#6f8259'), boot = '#2b2c33', leg = f === 'P' ? '#77633f' : '#5d6e4c', web = '#3f3b30';
+  const skin = '#f2c9a0', helm = t === 'eng' ? (mil ? '#c9a63c' : '#f2c21c') : f === 'P' ? (mil ? '#6a563c' : '#7b5b3b') : (mil ? '#5e6b4d' : '#6f8259'), boot = '#2b2c33', leg = f === 'P' ? '#77633f' : '#5d6e4c', web = '#3f3b30';
   g.lineJoin = 'round'; g.lineCap = 'round';
   const blob = (x, y, w, h, col, r = 1.6) => { g.beginPath(); g.roundRect((x - w / 2) * u, (y - h / 2) * u, w * u, h * u, r * u); g.fillStyle = col; g.strokeStyle = OUT; g.lineWidth = ow * u; g.stroke(); g.fill(); };
   const line = (x0, y0, x1, y1, w, col) => { g.beginPath(); g.moveTo(x0 * u, y0 * u); g.lineTo(x1 * u, y1 * u); g.strokeStyle = OUT; g.lineWidth = (w + ow + 0.1) * u; g.stroke(); g.strokeStyle = col; g.lineWidth = w * u; g.stroke(); };
@@ -1143,7 +1198,8 @@ function drawInf(g, S, t, c, f, dir, frame) {
   // weapon
   const hx = dx * 3, hy = -8.5 + dy * 2;
   if (hi && t !== 'gren') line(-side * 3.1, -10.2, hx + dx * 1.2, hy + 0.9, 1.9, c.Td);    // the arm holding it
-  if (t === 'rkt') { line(-dx * 5, -12.5 - dy * 2.5, dx * 7, -12.5 + dy * 3.5, 2.6, '#566246'); line(dx * 6, -12.5 + dy * 3, dx * 7.5, -12.5 + dy * 3.8, 2.8, c.red); }
+  if (t === 'eng') { blob(hx + dx * 1.6, hy + 4.2, 5.2, 3.6, mil ? '#8a3a30' : '#c8372c', 0.8); line(hx + dx * 1.6 - 1.4, hy + 2.3, hx + dx * 1.6 + 1.4, hy + 2.3, 0.9, '#3c3f47'); }      // toolbox
+  else if (t === 'rkt') { line(-dx * 5, -12.5 - dy * 2.5, dx * 7, -12.5 + dy * 3.5, 2.6, '#566246'); line(dx * 6, -12.5 + dy * 3, dx * 7.5, -12.5 + dy * 3.8, 2.8, c.red); }
   else if (t === 'gren') { line(hx, hy, hx + dx * 3 + 1, hy - 5, 1.8, skin); blob(hx + dx * 3 + 1, hy - 6.5, 3, 3.4, '#4d5a3c', 1.4); }
   else if (t === 'flm') { line(hx - dx * 2, hy + 1, hx + dx * 6, hy + 1 + dy * 3, 2, '#4a4f58'); line(hx + dx * 6, hy + 1 + dy * 3, hx + dx * 7.4, hy + 1 + dy * 3.7, 2.4, c.fire); }
   else { line(hx - dx * 3, hy + 0.5 - dy * 1.5, hx + dx * 6.5, hy + 0.5 + dy * 3.2, 1.7, '#3c3f47'); if (hi) line(hx - dx * 3, hy + 0.5 - dy * 1.5, hx - dx * 1, hy + 0.5 - dy * 0.5, 2.1, '#7a5a3a'); }
@@ -1177,7 +1233,7 @@ export function sprite(name, S, { dir = 0, color = 0, faction = 'A', frame = 0, 
     } else {
       const veh = name.endsWith('_t') || !!DEFS.units[name], k = new Kit(dir * Math.PI / 8, c, faction, veh);
       M[name](k, c, faction, frame);
-      s = renderParts(k.parts, S, !!DEFS.buildings[name], { veh, mil, seed: hashStr(name), wheel: mil ? '#7d7a68' : '#868d95' });     // only buildings cast a shaped shadow
+      s = renderParts(k.parts, S, !!(DEFS.buildings[name] || DEFS.neutral[name]), { veh, mil, seed: hashStr(name), wheel: mil ? '#7d7a68' : '#868d95' });     // only buildings cast a shaped shadow
     }
   }
   cache.set(key, s); cachePx += pxOf(s);
@@ -1190,7 +1246,7 @@ export const hasModel = n => !!M[n] || isInf(n);
 // Sidebar picture: the model on a little stage.
 export function cameo(type, faction, color, w = 128, h = 96) {
   const cv = mkCanvas(w, h), g = cv.getContext('2d');
-  const bd = DEFS.buildings[type], grad = g.createLinearGradient(0, 0, 0, h), mil = STYLE.palette === 'military';
+  const bd = DEFS.buildings[type] || DEFS.neutral[type], grad = g.createLinearGradient(0, 0, 0, h), mil = STYLE.palette === 'military';
   if (mil) { grad.addColorStop(0, '#48524f'); grad.addColorStop(0.62, '#8b8d78'); grad.addColorStop(0.63, '#7c7850'); grad.addColorStop(1, '#55533a'); }
   else { grad.addColorStop(0, '#39506a'); grad.addColorStop(0.62, '#5d7a93'); grad.addColorStop(0.63, '#6f8f52'); grad.addColorStop(1, '#4f6d3a'); }
   g.fillStyle = grad; g.fillRect(0, 0, w, h);

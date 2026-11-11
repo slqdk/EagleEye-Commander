@@ -3,7 +3,7 @@ import { sprite, TURRET, FRAMES, isInf, OUT, shade, KZ, STYLE } from './toon.js'
 import { DEFS } from '../shared/defs.js';
 import { mulberry32 } from '../shared/util.js';
 
-const BD = DEFS.buildings, UD = DEFS.units;
+const BD = { ...DEFS.buildings, ...DEFS.neutral }, UD = DEFS.units;      // neutral buildings are drawn like any other building
 const AIR = 1.25;   // flying height in cells
 export const GROUP_COL = ['#ffd23e', '#ff7a3d', '#ff5fa2'];
 const hash = (x, y) => { let n = (x * 374761393 + y * 668265263) | 0; n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
@@ -22,6 +22,30 @@ const LAND = {
     trunk: '#6e5236', bush: '#62824a', bushHi: '#7d9a5c', flower: ['#b9ad6e', '#c7ba7c', '#a89c62', '#d0c48a'], oreBed: 'rgba(130,118,60,0.42)', sky: '#0c0e10',
     radar: { '.': [124, 138, 82], f: [70, 100, 60], r: [140, 136, 126], w: [70, 124, 158], b: [128, 172, 190] } },
 };
+// Other landscapes: the same country in other colours (looks only). Each entry replaces part of the palette above.
+const THEME = {
+  snow: {
+    cartoon: { grass: '#e8eef4', hi: 'rgba(255,255,255,0.65)', lo: 'rgba(186,204,222,0.5)', tuft: '#b4c4d6', dirt: '148,150,154', sand: '#cbd9e6', sandDot: '#a9bbcc', edge: '#285c94', foam: '#f0f9ff', water: '#3f93d6', deep: '#3483c6', ford: '#a4d4f0', wave: '#d4ecfc',
+      rock: '#98a0ad', rockHi: '#eaeff4', rockLo: '#727a88', stone: '#b4bcc7', stoneHi: '#f3f6f9', wood: 'rgba(160,186,190,0.7)', leaf: ['#2c6c4e', '#357856'], leafHi: ['#f5f9fb', '#e4eef3'], leafLo: '#225a42', pine: ['#236646', '#2b714e'], pineHi: ['#f5f9fb', '#e4eef3'],
+      bush: '#5c8c76', bushHi: '#f3f7f9', flower: ['#ffffff', '#dde7f0', '#cbd8e4', '#ffffff'], oreBed: 'rgba(120,128,120,0.34)', shadow: 'rgba(50,72,104,0.22)', fir: 0.8,
+      radar: { '.': [226, 232, 238], f: [86, 128, 110], r: [150, 156, 166], w: [60, 132, 204], b: [156, 204, 232] } },
+    military: { grass: '#d3d8d6', hi: 'rgba(236,240,238,0.6)', lo: 'rgba(168,178,180,0.5)', tuft: '#a3aeae', dirt: '128,124,112', sand: '#b5bfc2', sandDot: '#96a2a6', edge: '#264a64', foam: '#d6e2e4', water: '#44788f', deep: '#3a6b81', ford: '#8fb4c0', wave: '#b7cfd6',
+      rock: '#8b8c88', rockHi: '#dfe2de', rockLo: '#666862', stone: '#a2a49e', stoneHi: '#e3e5e0', wood: 'rgba(140,156,146,0.7)', leaf: ['#3c5c44', '#45674c'], leafHi: ['#e6eae4', '#d8ded6'], leafLo: '#314e3a', pine: ['#33543c', '#3b5e44'], pineHi: ['#e6eae4', '#d8ded6'],
+      bush: '#587060', bushHi: '#e2e6e0', flower: ['#eef0ec', '#d4dad6', '#c2cac6', '#f4f5f2'], oreBed: 'rgba(110,108,90,0.36)', shadow: 'rgba(40,52,64,0.24)', fir: 0.8,
+      radar: { '.': [208, 214, 212], f: [84, 108, 92], r: [140, 141, 136], w: [68, 118, 142], b: [140, 178, 190] } },
+  },
+  desert: {
+    cartoon: { grass: '#e6c98a', hi: 'rgba(244,222,160,0.55)', lo: 'rgba(206,172,108,0.5)', tuft: '#b89858', dirt: '176,132,84', sand: '#f0dca6', sandDot: '#c9ad6e', edge: '#2a7a8c', foam: '#e2f6f4', water: '#3fb0c4', deep: '#34a0b6', ford: '#8cd8e0', wave: '#bfeef2',
+      rock: '#b9825c', rockHi: '#e2b58c', rockLo: '#8f5f42', stone: '#c49a72', stoneHi: '#ecd0aa', wood: 'rgba(170,160,90,0.6)', leaf: ['#7f9a44', '#8aa64c'], leafHi: ['#a5bd5e', '#b0c868'], leafLo: '#688238',
+      trunk: '#8a6038', bush: '#96a050', bushHi: '#b6c06a', flower: ['#c9a968', '#b89858', '#d8bc7e', '#a88848'], oreBed: 'rgba(104,66,28,0.5)', shadow: 'rgba(90,60,20,0.24)', fir: 0,
+      radar: { '.': [222, 194, 132], f: [132, 150, 76], r: [176, 126, 92], w: [64, 168, 190], b: [140, 212, 220] } },
+    military: { grass: '#c4ab78', hi: 'rgba(216,196,144,0.55)', lo: 'rgba(170,144,96,0.5)', tuft: '#9a8452', dirt: '140,112,76', sand: '#d4c08e', sandDot: '#ab9664', edge: '#2c5c66', foam: '#c8dcd8', water: '#4a8c96', deep: '#3f7d87', ford: '#84b6ba', wave: '#abd0d0',
+      rock: '#98755a', rockHi: '#c4a284', rockLo: '#735642', stone: '#a88c6e', stoneHi: '#d0b896', wood: 'rgba(138,134,84,0.6)', leaf: ['#6f7c46', '#79864e'], leafHi: ['#8f9c5c', '#99a664'], leafLo: '#5b683a',
+      trunk: '#73563a', bush: '#7c8450', bushHi: '#9aa066', flower: ['#a48e5e', '#94804e', '#b49e6e', '#857244'], oreBed: 'rgba(92,62,30,0.52)', shadow: 'rgba(70,50,22,0.26)', fir: 0,
+      radar: { '.': [190, 166, 116], f: [112, 124, 76], r: [150, 116, 90], w: [72, 138, 150], b: [130, 180, 186] } },
+  },
+};
+export const landFor = (palette, theme) => ({ shadow: 'rgba(30,60,25,0.28)', fir: 0.4, ...(LAND[palette] || LAND.military), ...((THEME[theme] || {})[palette] || (THEME[theme] || {}).military || {}) });
 
 export class Renderer {
   constructor(canvas) {
@@ -31,12 +55,13 @@ export class Renderer {
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
     // shadows, damaged building sprites, idle animation, amount of smoke and dust, sprite resolution
     this.opt = { shadows: true, damage: true, anim: true, particles: 1, sharp: 'auto' };
-    this.S = 64; this.oreSp = null; this.dirtCache = new Map();
+    this.S = 64; this.oreSp = null; this.dirtCache = new Map(); this.brInfo = new Map(); this.theme = 'grass';
     this.pickS();
   }
   pickS() { const hd = this.dpr > 1.3, s = this.opt.sharp; this.S = s === 'high' ? (hd ? 128 : 96) : s === 'normal' ? 64 : hd ? 96 : 64; }
   // after a change of style or sharpness: everything that was painted in advance is painted again
   restyle() { this.pickS(); this.dirtCache.clear(); if (this.map) { this.bake(); this.buildOre(); } }
+  land() { return landFor(STYLE.palette, this.theme); }
   resize() {
     const r = this.cv.getBoundingClientRect(), d0 = this.dpr; this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this.cv.width = Math.max(2, Math.round(r.width * this.dpr)); this.cv.height = Math.max(2, Math.round(r.height * this.dpr));
@@ -56,9 +81,9 @@ export class Renderer {
   chance(p) { return Math.random() < p * this.opt.particles; }
 
   // ---------- terrain ----------
-  setMap(map) {
-    if (this.map && this.map.t === map.t) return;
-    this.map = map; this.clear();
+  setMap(map, theme = 'grass') {
+    if (this.map && this.map.t === map.t && this.theme === theme) return;
+    this.map = map; this.theme = theme; this.clear(); this.dirtCache.clear(); this.brInfo = new Map();
     const n = map.n;
     this.fogCv = mk(n, n); this.fogImg = this.fogCv.getContext('2d').createImageData(n, n); this.fogKey = null; this.fogA = this.fogT = null;
     this.oreCv = mk(n, n); this.oreImg = this.oreCv.getContext('2d').createImageData(n, n); this.oreAt = -1;
@@ -66,7 +91,7 @@ export class Renderer {
   }
   bake() {
     const map = this.map, n = map.n, T = map.t, TP = Math.min(48, Math.floor(4096 / n)), W = n * TP, cv = mk(W, W), g = cv.getContext('2d'), R = mulberry32(n * 7 + T.length);
-    const L = LAND[STYLE.palette] || LAND.military, hi = STYLE.detail === 'high', OW = STYLE.outline === 'thin' ? 0.6 : 1;
+    const L = this.land(), hi = STYLE.detail === 'high', OW = STYLE.outline === 'thin' ? 0.6 : 1;
     this.TP = TP; this.terrain = cv;
     const at = (x, y) => x < 0 || y < 0 || x >= n || y >= n ? '.' : T[y * n + x];
     const cells = ch => { const l = []; for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (T[y * n + x] === ch) l.push([x, y]); return l; };
@@ -106,7 +131,7 @@ export class Renderer {
       for (let i = 0; i < n * n / 34; i++) {          // bushes
         const x = R() * W, y = R() * W, r = TP * (0.13 + R() * 0.08); if (!open(x, y)) continue;
         const b = () => { g.beginPath(); g.arc(x, y, r, 0, 7); g.moveTo(x - r * 0.3, y + r * 0.35); g.arc(x - r * 0.9, y + r * 0.35, r * 0.6, 0, 7); g.moveTo(x + r * 1.5, y + r * 0.3); g.arc(x + r * 0.85, y + r * 0.3, r * 0.65, 0, 7); };
-        g.fillStyle = 'rgba(20,50,20,0.25)'; g.beginPath(); g.ellipse(x + r * 0.3, y + r * 0.75, r * 1.5, r * 0.5, 0, 0, 7); g.fill();
+        g.fillStyle = L.shadow; g.beginPath(); g.ellipse(x + r * 0.3, y + r * 0.75, r * 1.5, r * 0.5, 0, 0, 7); g.fill();
         g.strokeStyle = OUT; g.lineWidth = TP * 0.09 * OW; b(); g.stroke(); g.fillStyle = L.bush; b(); g.fill();
         g.fillStyle = L.bushHi; g.beginPath(); g.arc(x - r * 0.25, y - r * 0.3, r * 0.45, 0, 7); g.fill();
       }
@@ -138,7 +163,7 @@ export class Renderer {
       g.strokeStyle = 'rgba(30,30,40,0.35)'; g.lineWidth = Math.max(1, TP * 0.03); g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(pts[3][0], pts[3][1]); g.moveTo(c[0], c[1]); g.lineTo(pts[7][0], pts[7][1]); g.moveTo(c[0], c[1]); g.lineTo(pts[4][0], pts[4][1]); g.stroke();
     };
     for (const [x, y] of cells('r')) {
-      g.fillStyle = 'rgba(40,60,30,0.25)'; g.beginPath(); g.ellipse((x + 0.58) * TP, (y + 0.72) * TP, TP * 0.5, TP * 0.26, 0, 0, 7); g.fill();
+      g.fillStyle = L.shadow; g.beginPath(); g.ellipse((x + 0.58) * TP, (y + 0.72) * TP, TP * 0.5, TP * 0.26, 0, 0, 7); g.fill();
       if (hi) { boulder((x + 0.5 + (hash(x, y) - 0.5) * 0.2) * TP, (y + 0.48) * TP, TP * 0.5, x * 17 + y * 3); if (hash(x, y + 77) < 0.6) boulder((x + 0.28) * TP, (y + 0.74) * TP, TP * 0.2, x + y * 29); if (hash(x + 5, y) < 0.4) lump((x + 0.78) * TP, (y + 0.82) * TP, TP * 0.1, L.stone, L.stoneHi, x * 3 + y, 0.08); }
       else { lump((x + 0.5 + (hash(x, y) - 0.5) * 0.2) * TP, (y + 0.5) * TP, TP * 0.5, L.rock, L.rockHi, x * 17 + y * 3); if (hash(x, y + 77) < 0.5) lump((x + 0.3) * TP, (y + 0.72) * TP, TP * 0.22, shade(L.rock, -0.1), L.rockHi, x + y * 29); }
     }
@@ -149,10 +174,10 @@ export class Renderer {
       const k = hash(x, y) < (hi ? 0.45 : 0.3) ? 2 : 1;
       for (let i = 0; i < k; i++) {
         const px = (x + 0.5 + (hash(x + i * 7, y) - 0.5) * 0.5) * TP, py = (y + 0.62 + (hash(x, y + i * 13) - 0.5) * 0.3) * TP, r = TP * (0.3 + hash(x + i, y + 5) * 0.12), v = hash(x * 3, y * 7 + i) < 0.5 ? 0 : 1;
-        g.fillStyle = 'rgba(30,60,25,0.3)'; g.beginPath(); g.ellipse(px + r * 0.35, py + r * 0.25, r * 1.05, r * 0.5, 0, 0, 7); g.fill();
+        g.fillStyle = L.shadow; g.beginPath(); g.ellipse(px + r * 0.35, py + r * 0.25, r * 1.05, r * 0.5, 0, 0, 7); g.fill();
         g.strokeStyle = OUT; g.lineWidth = TP * 0.2 * OW; g.beginPath(); g.moveTo(px, py); g.lineTo(px, py - r * 0.9); g.stroke();
         g.strokeStyle = L.trunk; g.lineWidth = TP * 0.09; g.stroke();
-        if (hi && hash(x * 11 + i, y * 5) < 0.4) {       // a fir: three tiers
+        if (hi && hash(x * 11 + i, y * 5) < L.fir) {       // a fir: three tiers
           const tier = (cy, w, h) => { g.beginPath(); g.moveTo(px, cy - h); g.lineTo(px + w, cy); g.lineTo(px - w, cy); g.closePath(); };
           for (let j = 0; j < 3; j++) {
             const cy = py - r * (0.5 + j * 0.72), w = r * (1.0 - j * 0.24), h = r * 1.15;
@@ -203,6 +228,42 @@ export class Renderer {
     this.dirtCache.set(key, cv); return cv;
   }
 
+  // Bridges: a deck over the water, drawn along the direction the road runs (b.a). scene.bridges = [{ id, cells, a, hp, dead }].
+  // A fallen bridge leaves a stump at each bank.
+  drawBridges(scene, X, Y, Z) {
+    const list = scene.bridges; if (!list || !list.length) return;
+    const g = this.g, n = this.map.n, L = this.land(), ow = Math.max(1.5, Z * 0.05) * (STYLE.outline === 'thin' ? 0.6 : 1), hi = STYLE.detail === 'high';
+    for (const b of list) {
+      let q = this.brInfo.get(b.id);
+      if (!q) {      // centre and length of the deck, measured along the road
+        const ux = Math.cos(b.a || 0), uy = Math.sin(b.a || 0); let cx = 0, cy = 0, lo = 1e9, hi2 = -1e9, wide = 0;
+        for (const c of b.cells) { cx += (c % n) + 0.5; cy += ((c / n) | 0) + 0.5; } cx /= b.cells.length; cy /= b.cells.length;
+        for (const c of b.cells) { const dx = (c % n) + 0.5 - cx, dy = ((c / n) | 0) + 0.5 - cy, t = dx * ux + dy * uy; lo = Math.min(lo, t); hi2 = Math.max(hi2, t); wide = Math.max(wide, Math.abs(dx * uy - dy * ux)); }
+        q = { cx: cx + ux * (lo + hi2) / 2, cy: cy + uy * (lo + hi2) / 2, len: hi2 - lo + 1.9, wid: Math.min(2.3, Math.max(1.5, wide * 2 + 1)) }; this.brInfo.set(b.id, q);
+      }
+      const down = b.dead || !(b.hp > 0), hl = q.len / 2 * Z, hw = q.wid / 2 * Z, worn = !down && b.hp < (b.mhp || DEFS.bridge.hp) * 0.5;
+      const part = (x0, x1, draw) => { draw(x0, -hw, x1 - x0, hw * 2); };
+      const spans = down ? [[-hl, -hl * 0.52], [hl * 0.52, hl]] : [[-hl, hl]];
+      g.save(); g.translate(X(q.cx), Y(q.cy)); g.rotate(b.a || 0);
+      g.fillStyle = 'rgba(8,18,28,0.3)'; for (const [x0, x1] of spans) g.fillRect(x0 + Z * 0.1, -hw + Z * 0.16, x1 - x0, hw * 2);      // shadow on the water
+      g.fillStyle = OUT; for (const [x0, x1] of spans) g.fillRect(x0 - ow, -hw - ow, x1 - x0 + 2 * ow, hw * 2 + 2 * ow);
+      for (const [x0, x1] of spans) {
+        g.fillStyle = down ? shade(L.stone, -0.28) : L.stone; g.fillRect(x0, -hw, x1 - x0, hw * 2);
+        if (hi) { g.strokeStyle = 'rgba(0,0,0,0.17)'; g.lineWidth = Math.max(1, Z * 0.02); g.beginPath(); for (let x = x0 + Z * 0.5; x < x1 - 1; x += Z * 0.5) { g.moveTo(x, -hw); g.lineTo(x, hw); } g.stroke(); }      // slabs
+        const kerb = Z * 0.17;
+        for (const y of [-hw, hw - kerb]) { g.fillStyle = down ? shade(L.stoneHi, -0.3) : L.stoneHi; g.fillRect(x0, y, x1 - x0, kerb); g.fillStyle = OUT; g.fillRect(x0, y === -hw ? y + kerb - ow * 0.5 : y, x1 - x0, ow * 0.5); }
+        if (hi && !down) { g.fillStyle = OUT; for (let x = x0 + Z * 0.25; x < x1; x += Z * 0.5) { g.fillRect(x - ow * 0.4, -hw, ow * 0.8, kerb * 0.6); g.fillRect(x - ow * 0.4, hw - kerb * 0.6, ow * 0.8, kerb * 0.6); } }      // rail posts
+        if (!down && hi) { g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = Math.max(1, Z * 0.03); g.setLineDash([Z * 0.3, Z * 0.3]); g.beginPath(); g.moveTo(x0 + Z * 0.2, 0); g.lineTo(x1 - Z * 0.2, 0); g.stroke(); g.setLineDash([]); }
+      }
+      if (down) {      // broken ends and soot
+        g.fillStyle = OUT; for (const [x, s] of [[-hl * 0.52, 1], [hl * 0.52, -1]]) { g.beginPath(); g.moveTo(x - s * ow, -hw - ow); for (let i = 0; i <= 6; i++) g.lineTo(x + s * (i % 2 ? Z * 0.16 : 0), -hw + hw * 2 * i / 6); g.lineTo(x - s * ow, hw + ow); g.closePath(); g.fill(); }
+        g.fillStyle = 'rgba(20,16,14,0.4)'; for (const [x0, x1] of spans) g.fillRect(x0, -hw, x1 - x0, hw * 2);
+      } else if (worn) { g.fillStyle = 'rgba(20,16,14,0.42)'; for (let i = 0; i < 4; i++) { g.beginPath(); g.ellipse((hash(b.id, i) - 0.5) * hl * 1.5, (hash(i, b.id) - 0.5) * hw * 1.2, Z * 0.3, Z * 0.2, hash(b.id + 3, i) * 3, 0, 7); g.fill(); } }
+      if (b.sel) { g.strokeStyle = '#fff'; g.lineWidth = Math.max(2, Z * 0.05); g.setLineDash([Z * 0.2, Z * 0.14]); g.strokeRect(-hl - Z * 0.15, -hw - Z * 0.15, hl * 2 + Z * 0.3, hw * 2 + Z * 0.3); g.setLineDash([]); }
+      g.restore();
+    }
+  }
+
   // ---------- effects ----------
   puff(x, y, z, col, r, life, vz = 0.5, vx = 0, vy = 0) { this.fx.push({ k: 'p', x, y, z, vx, vy, vz, r, col, t0: this.t, life }); }
   boom(x, y, size, delay = 0, z = 0) {
@@ -232,6 +293,15 @@ export class Renderer {
         if (!e.a1 && this.chance(0.8)) this.puff(mx, my, tall, '#e8e4d8', 0.12, 0.45, 0.25, ux * 0.5, uy * 0.5);       // muzzle smoke
         this.boom(e.x2, e.y2, lob ? 0.8 + e.sp * 0.4 : 0.35, e.a1 && lob ? 0.45 : life, z2);
       }
+    } else if (e.k === 'ud' && e.wet) {      // went down with a bridge
+      this.fx.push({ k: 'ring', x: e.x, y: e.y, r: 0.7, t0: t, life: 0.5 });
+      for (let i = 0; i < 5; i++) this.puff(e.x + (Math.random() - 0.5) * 0.4, e.y + (Math.random() - 0.5) * 0.3, 0.1, '#dff1f8', 0.13, 0.6, 1.1, (Math.random() - 0.5) * 0.6, 0);
+    } else if (e.k === 'brd') {
+      for (let i = 0; i < 5; i++) this.boom(e.x + (Math.random() - 0.5) * 2.2, e.y + (Math.random() - 0.5) * 2.2, 0.8 + Math.random() * 0.7, i * 0.1);
+      for (let i = 0; i < 10; i++) this.puff(e.x + (Math.random() - 0.5) * 2.4, e.y + (Math.random() - 0.5) * 2.4, 0.1, '#dff1f8', 0.18, 0.9, 1.4, (Math.random() - 0.5) * 0.8, 0);
+    } else if (e.k === 'cap') {
+      this.fx.push({ k: 'ring', x: e.x, y: e.y, r: 1.7, t0: t, life: 0.6 }); this.fx.push({ k: 'tx', x: e.x, y: e.y - 0.6, txt: 'OVERTAGET', t0: t, life: 1.8 });
+    } else if (e.k === 'hl') { this.fx.push({ k: 'tx', x: e.x, y: e.y - 0.3, txt: '+', col: '#7cf07c', t0: t, life: 0.7 });
     } else if (e.k === 'ud') {
       if (e.c === 'inf') { for (let i = 0; i < 4; i++) this.puff(e.x + (Math.random() - 0.5) * 0.3, e.y, 0.2, '#f1f1ea', 0.14, 0.5, 0.8, (Math.random() - 0.5), 0); }
       else if (e.c === 'air') { this.boom(e.x, e.y, 1.1, 0, AIR); for (let i = 0; i < 6; i++) this.puff(e.x, e.y, AIR * (1 - i / 6), '#3c3c42', 0.16, 0.9, -0.3, 0, 0); this.boom(e.x, e.y, 0.7, 0.5); this.decals.push({ x: e.x, y: e.y, r: 0.45, wreck: 1, t0: t + 0.5, rot: Math.random() * 3 }); }
@@ -251,12 +321,14 @@ export class Renderer {
     const g = this.g, c = this.cam, dpr = this.dpr, Z = c.z * dpr, W = this.cv.width, H = this.cv.height, n = this.map.n, S = this.S, k = Z / S, opt = this.opt;
     this.t = time; this.colors = scene.colors;
     const X = x => (x - c.x) * Z + W / 2, Y = y => (y - c.y) * Z + H / 2;
-    g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = (LAND[STYLE.palette] || LAND.military).sky; g.fillRect(0, 0, W, H);
+    g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = this.land().sky; g.fillRect(0, 0, W, H);
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'medium';
     const x0 = Math.max(0, Math.floor(c.x - W / Z / 2)), y0 = Math.max(0, Math.floor(c.y - H / Z / 2)), x1 = Math.min(n, Math.ceil(c.x + W / Z / 2)), y1 = Math.min(n, Math.ceil(c.y + H / Z / 2));
     const TP = this.TP;
     g.drawImage(this.terrain, x0 * TP, y0 * TP, (x1 - x0) * TP, (y1 - y0) * TP, X(x0), Y(y0), (x1 - x0) * Z, (y1 - y0) * Z);
+    this.drawBridges(scene, X, Y, Z);
     const col = o => scene.colors[o] || { color: 0, faction: 'A' };
+    const colB = b => b.neutral ? { color: scene.colors[b.o] ? scene.colors[b.o].color : -1, faction: 'N' } : col(b.o);
     const vis = scene.fog ? scene.fog.vis : null, mine = scene.mine || (() => true);
     const inView = (x, y, m = 3) => x > x0 - m && x < x1 + m && y > y0 - m && y < y1 + m;
     // gather what is on screen
@@ -306,7 +378,7 @@ export class Renderer {
     if (opt.shadows) {
       g.globalAlpha = 0.24;
       for (const it of list) {
-        if (it.b) { const b = it.b, o = col(b.o), sp = sprite(b.t, S, { color: o.color, faction: o.faction }); if (sp.sh && !(b.an && (b.gone || time < b.an.t0 + b.an.dur))) g.drawImage(sp.sh.cv, X(b.x + it.d.w / 2) - sp.sh.ax * k, Y(b.y + it.d.h / 2) - sp.sh.ay * k, sp.sh.cv.width * k, sp.sh.cv.height * k); }
+        if (it.b) { const b = it.b, o = colB(b), sp = sprite(b.t, S, { color: o.color, faction: o.faction }); if (sp.sh && !(b.an && (b.gone || time < b.an.t0 + b.an.dur))) g.drawImage(sp.sh.cv, X(b.x + it.d.w / 2) - sp.sh.ax * k, Y(b.y + it.d.h / 2) - sp.sh.ay * k, sp.sh.cv.width * k, sp.sh.cv.height * k); }
         else { const u = it.u, r = UD[u.t].r; g.fillStyle = '#000'; g.beginPath(); g.ellipse(X(u.x + r * 0.25), Y(u.y + r * 0.2), r * 1.15 * Z, r * 0.8 * Z, 0, 0, 7); g.fill(); }
       }
       g.globalAlpha = 1;
@@ -314,7 +386,7 @@ export class Renderer {
     const tickNow = scene.tick ?? -999, anim = opt.anim;
     for (const it of list) {
       if (it.b) {
-        const b = it.b, d = it.d, o = col(b.o);
+        const b = it.b, d = it.d, o = colB(b);
         const fr = !FRAMES[b.t] || !anim ? 0 : b.t === 'hq' ? (b.busy ? Math.floor(time * 7) % 8 : 0) : b.t === 'rad' ? (b.off ? 0 : Math.floor(time * 7) % 16) : b.t === 'coil' ? (tickNow - b.shot < 4 || (!b.off && Math.floor(time * 2 + b.id) % 5 === 0) ? 1 : 0) : Math.floor(time * 4 + b.id) % 2;
         const px = X(b.x + d.w / 2), py = Y(b.y + d.h / 2), a = b.ghost ? 0.8 : 1, low = b.hp < b.mhp * 0.5, bad = b.hp < b.mhp * 0.25;
         if (b.an) { const p = (time - b.an.t0) / b.an.dur; if (p < 1) { this.rise(b, d, o, px, py, Math.max(0, p), b.an.k === 'sell', X, Y, Z, k); continue; } if (b.gone) continue; }
@@ -327,7 +399,8 @@ export class Renderer {
           if (b.t === 'pow' && !b.off && this.chance(0.07)) { const P = o.faction === 'P'; this.puff(b.x + 1 + (P ? 0.28 : 0.6), b.y + 1 + (P ? -0.2 : Math.random() < 0.5 ? -0.5 : 0.2), P ? 1.25 : 1.4, '#f4f4ee', P ? 0.2 : 0.11, 1.6, 0.7, 0.18); }
           if (b.t === 'fac' && !b.off && this.chance(0.04)) this.puff(b.x + 2.55, b.y + 0.45, 1.75, '#8a8a90', 0.12, 1.4, 0.7, 0.15);
         }
-        if (b.hp < b.mhp || b.sel) this.hpBar(px, py - (d.h / 2 + 0.25) * Z - (d.h > 1 ? 0.5 * Z : 0.3 * Z), d.w * Z * 0.8, b.hp / b.mhp);
+        if (b.neutral) { if (b.sel) this.selRing(px, py + 0.2 * Z, 1.15 * Z); }
+        else if (b.hp < b.mhp || b.sel) this.hpBar(px, py - (d.h / 2 + 0.25) * Z - (d.h > 1 ? 0.5 * Z : 0.3 * Z), d.w * Z * 0.8, b.hp / b.mhp);
       } else {
         const u = it.u, o = col(u.o), px = X(u.x), py = Y(u.y), d = UD[u.t];
         if (u.sel) this.selRing(px, py, d.r * Z);
@@ -437,7 +510,7 @@ export class Renderer {
       } else if (f.k === 'tx') {
         const px = X(f.x), py = Y(f.y - 0.6 - a * 0.9);
         g.globalAlpha = 1 - a * a * a; g.font = `900 ${14 * dpr}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.lineWidth = 4 * dpr; g.strokeStyle = OUT; g.strokeText(f.txt, px, py); g.fillStyle = '#ffd23e'; g.fillText(f.txt, px, py); g.globalAlpha = 1;
+        g.lineWidth = 4 * dpr; g.strokeStyle = OUT; g.strokeText(f.txt, px, py); g.fillStyle = f.col || '#ffd23e'; g.fillText(f.txt, px, py); g.globalAlpha = 1;
       } else if (f.k === 'ring') {
         const r = f.r * Z * (0.3 + a * 0.9);
         g.globalAlpha = (1 - a) * 0.75; g.strokeStyle = '#fff3c4'; g.lineWidth = (3.5 - a * 2.5) * dpr; g.beginPath(); g.ellipse(X(f.x), Y(f.y), r, r * 0.78, 0, 0, 7); g.stroke(); g.globalAlpha = 1;
@@ -467,7 +540,8 @@ export class Renderer {
       }
       g.drawImage(this.oreCv, 0, 0, w, h);
       const vis = scene.fog ? scene.fog.vis : null, mine = scene.mine || (() => true);
-      for (const b of scene.buildings) { if (b.dead) continue; const d = BD[b.t], o = scene.colors[b.o]; g.fillStyle = DEFS.colors[o ? o.color : 0].main; g.fillRect(b.x * s, b.y * s, Math.max(2, d.w * s), Math.max(2, d.h * s)); }
+      for (const b of scene.bridges || []) if (!b.dead && b.hp > 0) { g.fillStyle = '#c9b48a'; for (const c of b.cells) g.fillRect((c % n) * s, ((c / n) | 0) * s, Math.max(1.5, s), Math.max(1.5, s)); }
+      for (const b of scene.buildings) { if (b.dead) continue; const d = BD[b.t], o = scene.colors[b.o]; g.fillStyle = b.neutral && !o ? '#f4f1e8' : DEFS.colors[o ? o.color : 0].main; g.fillRect(b.x * s, b.y * s, Math.max(2, d.w * s), Math.max(2, d.h * s)); if (b.neutral) { g.strokeStyle = '#10161c'; g.lineWidth = 1; g.strokeRect(b.x * s + 0.5, b.y * s + 0.5, Math.max(2, d.w * s) - 1, Math.max(2, d.h * s) - 1); } }
       for (const u of scene.units) { if (u.dead || (vis && !mine(u.o) && !vis[(u.y | 0) * n + (u.x | 0)])) continue; const o = scene.colors[u.o]; g.fillStyle = DEFS.colors[o ? o.color : 0].light; g.fillRect(u.x * s - 1, u.y * s - 1, 2.4, 2.4); }
       if (scene.fog) { this.updateFog(scene.fog); g.drawImage(this.fogCv, 0, 0, w, h); }
       for (const p of this.pings) { const a = (time - p.t0) / 3; if (a > 1 || a < 0) continue; g.strokeStyle = `rgba(255,70,50,${1 - a})`; g.lineWidth = 2; g.beginPath(); g.arc(p.x * s, p.y * s, 4 + (a * 3 % 1) * 16, 0, 7); g.stroke(); }

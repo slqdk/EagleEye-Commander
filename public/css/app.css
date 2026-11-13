@@ -132,6 +132,14 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .grp .sum { flex: 1; font-size: 13.5px; line-height: 1.2; min-width: 0; } .grp .sum small { color: var(--dim); display: block; }
 .urow { display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 5px; align-items: center; padding: 3px 0; font-size: 14px; } .urow b { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
 .hint { color: var(--dim); font-size: 13px; margin: 6px 0; }
+/* the attack menu: the enemy camps, then the planned attacks */
+.sec { font: 400 15px var(--disp); letter-spacing: .07em; color: var(--sky); margin: 10px 0 0; text-transform: uppercase; }
+.camp { border: 3px solid var(--edge); border-radius: 10px; background: #1d252e; padding: 6px 8px; margin-top: 6px; } .camp.on { border-color: var(--gold); }
+.camp .hd { display: flex; align-items: flex-start; gap: 8px; } .camp .chip { margin-top: 2px; }
+.camp .sum { flex: 1; font-size: 14.5px; line-height: 1.25; min-width: 0; } .camp .sum small { color: var(--dim); display: block; font-size: 13px; }
+.camp em, .pip em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--dim); } .camp em.atom, .pip em, .atom { color: var(--gold); }
+.camp .row { margin-top: 6px; gap: 6px; }
+.nuke { display: flex; gap: 10px; align-items: center; border-top: 2px solid rgba(0,0,0,.3); margin-top: 6px; padding-top: 7px; font-size: 14px; } .nuke small { display: block; color: var(--dim); font-size: 12.5px; line-height: 1.25; } .nuke.dis { opacity: .65; } .nuke .sw { flex: none; }
 #placebar { left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 10px; align-items: center; white-space: nowrap; max-width: calc(100% - 20px); }
 #replaybar { left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; width: min(560px, calc(100% - 20px)); }
 #replaybar .bar { flex: 1; height: 12px; border: 3px solid var(--edge); border-radius: 8px; background: #10151b; overflow: hidden; min-width: 40px; } #replaybar .bar i { display: block; height: 100%; background: var(--gold); width: 0; }

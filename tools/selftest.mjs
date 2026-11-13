@@ -1,6 +1,6 @@
 // Plays whole AI-only matches headless and prints what happened. Run: npm test
-//   node tools/selftest.mjs <bots> <rounds> <seed> <map: random|kors|grav|pas> <size: normal|large|huge>
-import { newGame, addBot, startGame, resolveRound, buildSnapshot, powerState } from '../public/shared/engine.js';
+//   node tools/selftest.mjs <bots> <rounds> <seed> <map: random|kors|grav|pas> <size: normal|large|huge|giant>
+import { newGame, addBot, startGame, resolveRound, buildSnapshot, powerState, nukeState } from '../public/shared/engine.js';
 import { createSim } from '../public/shared/sim.js';
 
 const bots = +process.argv[2] || 4, rounds = +process.argv[3] || 25, seed = +process.argv[4] || 12345, kind = process.argv[5] || 'random', size = process.argv[6] || 'normal';
@@ -17,23 +17,19 @@ console.log('deterministisk:', r1 === r2 ? 'ja' : 'NEJ');
 
 for (let r = 1; r <= rounds && g.phase === 'play'; r++) {
   const t0 = Date.now();
-  // keep the match alive although nobody is human
-  const alive = g.players.filter(p => p.alive);
-  alive[0].kind = 'human'; alive[0].wasBot = true;
-  const fake = alive[0];
-  // let the fake human still act as AI
+  // one general counts as human while the round is resolved, which keeps the match going although nobody is; he still plays as an AI
+  const fake = g.players.find(p => p.alive);
   const { aiTurn } = await import('../public/shared/ai.js');
   const { mulberry32 } = await import('../public/shared/util.js');
   aiTurn(g, fake, mulberry32(r * 7919));
-  resolveRound(g, 0);
-  fake.kind = 'ai';
+  fake.kind = 'human'; resolveRound(g, 0); fake.kind = 'ai';
   if (g.phase === 'over' && g.players.filter(p => p.alive).length > 1) { g.phase = 'play'; g.winner = null; }
   const ms = Date.now() - t0;
   console.log(`R${r} (${ms} ms)` + (g.last.out.length ? '  UDE: ' + g.last.out.join(', ') : ''));
   for (const p of g.players) {
     if (!p.alive) continue;
-    const ps = powerState(p), rep = p.report || {};
-    console.log(`  ${p.name.padEnd(15)} ${p.faction} $${String(p.money).padStart(6)} +${String(rep.income || 0).padStart(5)}  byg ${String(p.buildings.length).padStart(2)}  strøm ${ps.use}/${ps.prod}  hær ${JSON.stringify(p.army)}  tab ${JSON.stringify(rep.lost || {})} bLost ${rep.bLost || 0} kills ${rep.killed || 0}`);
+    const ps = powerState(p), rep = p.report || {}, ns = nukeState(p, g.round, ps), mines = p.buildings.filter(b => b.t === 'mine').length;
+    console.log(`  ${p.name.padEnd(15)} ${p.faction} $${String(p.money).padStart(6)} +${String(rep.income || 0).padStart(5)}  byg ${String(p.buildings.length - mines).padStart(2)}  miner ${mines}  strøm ${ps.use}/${ps.prod}${ns.built ? '  silo ' + (ns.ready ? 'KLAR' : ns.on ? 'om ' + ns.left : 'uden strøm') : ''}${rep.nuked ? '  A-BOMBE mod ' + g.players.find(q => q.id === rep.nuked).name : ''}  hær ${JSON.stringify(p.army)}  tab ${JSON.stringify(rep.lost || {})} bLost ${rep.bLost || 0} kills ${rep.killed || 0}`);
   }
 }
 const owner = id => (g.players.find(p => p.id === id) || { name: '-' }).name;

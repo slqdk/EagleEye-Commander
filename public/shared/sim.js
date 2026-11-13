@@ -1,7 +1,7 @@
 // EagleEye Commander — deterministic round simulation on the shared battlefield.
 // The server runs it to get the result; the client runs the very same code to play the round back.
 // No trigonometry in here, so the outcome is identical in Node and in every browser.
-import { DEFS, dmgMult } from './defs.js';
+import { DEFS, dmgMult, isBase } from './defs.js';
 import { mulberry32, Heap, oreToArr, oreToStr, packBits, unpackBits, stamp } from './util.js';
 
 const DX = [1, -1, 0, 0, 1, 1, -1, -1], DY = [0, 0, 1, -1, 1, -1, 1, -1];
@@ -11,7 +11,7 @@ const SQ2 = 1.41421356;
 export function musterPositions(buildings, army, isFree) {
   const out = [], used = new Set(), BD = DEFS.buildings;
   const find = t => buildings.find(b => b.t === t && b.hp > 0);
-  const hq = find('hq') || buildings.find(b => !BD[b.t].wall && b.hp > 0);
+  const hq = find('hq') || buildings.find(b => isBase(b.t) && b.hp > 0);
   if (!hq) return out;
   const anchors = { bar: find('bar') || hq, fac: find('fac') || hq };
   const rings = {};
@@ -84,7 +84,7 @@ export function createSim(snap) {
   const teams = [];
   const P = snap.players.map((p, i) => {
     let ti = teams.indexOf(p.team); if (ti < 0) { ti = teams.length; teams.push(p.team); }
-    return { i, id: p.id, ti, faction: p.faction, income: 0, lost: {}, used: {}, killed: 0, bLost: 0, bKilled: 0, alertAt: -99 };
+    return { i, id: p.id, ti, faction: p.faction, income: 0, lost: {}, used: {}, killed: 0, bLost: 0, bKilled: 0, alertAt: -99, nuked: false };
   });
   const NT = teams.length;
   const hostile = (a, b) => P[a].ti !== P[b].ti;
@@ -92,13 +92,15 @@ export function createSim(snap) {
   for (let t = 0; t < NT; t++) { vis.push(new Uint8Array(N)); explored.push(new Uint8Array(N)); seen.push(new Set()); }
   snap.players.forEach((p, i) => { const e = unpackBits(p.explored, N), x = explored[P[i].ti]; for (let c = 0; c < N; c++) if (e[c]) x[c] = 1; });
 
-  const Bs = [], Us = [], deadB = [];
+  const Bs = [], Us = [], deadB = [], Ms = [];
+  const mAt = new Int32Array(N).fill(-1);      // the minefield in a cell (index into Ms). Mines block nothing and nobody can aim at them.
   let ev = [], tick = 0, fieldVer = 1, uid = 1, anyDead = false;
   const docks = new Set();
 
   snap.players.forEach((p, pi) => {
     for (const b of p.buildings) {
       const d = D.buildings[b.t];
+      if (d.mine) { const c = b.y * n + b.x; mAt[c] = Ms.length; Ms.push({ id: b.id, o: pi, x: b.x, y: b.y, c, dead: false }); continue; }
       const o = { id: b.id, o: pi, t: b.t, d, x: b.x, y: b.y, w: d.w, h: d.h, cx: b.x + d.w / 2, cy: b.y + d.h / 2, hp: b.hp, mhp: d.hp,
         cd: R() * 0.5, tgt: null, off: !!b.off, dead: false, isB: true, cls: d.wall ? 'wall' : 'bld', rad: Math.max(d.w, d.h) / 2,
         fx: 0, fy: 1, ax: 0, ay: 1, wp: d.weapon || null, shot: -99, hit: -99 };
@@ -107,6 +109,13 @@ export function createSim(snap) {
       if (b.t === 'ref') { const [dx, dy] = dockOf(b); docks.add(dy * n + dx); o.dock = dy * n + dx; }
     }
   });
+  // The home zone of every player: all cells within homeRange of one of the base's buildings. Units that stay home defend all of it.
+  const zones = snap.players.map(() => new Uint8Array(N));
+  for (const b of Bs) {
+    if (b.cls === 'wall') continue;
+    const z = zones[b.o], r = D.homeRange;
+    for (let y = Math.max(0, b.y - r); y < Math.min(n, b.y + b.h + r); y++) for (let x = Math.max(0, b.x - r); x < Math.min(n, b.x + b.w + r); x++) z[y * n + x] = 1;
+  }
 
   // Bridges are decks on water cells: passable while they stand. Neutral buildings block the way but are never targets.
   const brAt = new Int16Array(N).fill(-1);
@@ -124,7 +133,7 @@ export function createSim(snap) {
 
   const cellOf = (x, y) => (y | 0) * n + (x | 0);
   const inb = (x, y) => x >= 0 && y >= 0 && x < n && y < n;
-  const isFreeMuster = (x, y) => inb(x, y) && blk[y * n + x] === 0 && brAt[y * n + x] < 0 && !docks.has(y * n + x);      // nobody musters on a bridge
+  const isFreeMuster = (x, y) => inb(x, y) && blk[y * n + x] === 0 && brAt[y * n + x] < 0 && mAt[y * n + x] < 0 && !docks.has(y * n + x);      // nobody musters on a bridge or a minefield
 
   function mkUnit(pi, t, x, y) {
     const d = D.units[t];
@@ -284,11 +293,12 @@ export function createSim(snap) {
   const tx = t => t.isB ? t.cx : t.x, ty = t => t.isB ? t.cy : t.y;
   const distTo = (e, t) => t.isB ? rectDist(tx(e), ty(e), t) : Math.sqrt((t.x - tx(e)) * (t.x - tx(e)) + (t.y - ty(e)) * (t.y - ty(e)));
 
-  function acquire(e, wp, maxR, ax, ay) {
+  // zone: the home zone of a unit on guard; an enemy inside it is a target however far it is from the unit's post
+  function acquire(e, wp, maxR, ax, ay, zone = null) {
     let best = null, bs = 1e9; const ex = tx(e), ey = ty(e), w = wp.w, m2 = maxR * maxR, min = wp.minRange || 0;
     for (const u of Us) {
       if (u.dead || P[u.o].ti === P[e.o].ti || u === e.igT) continue;
-      const dx = u.x - ax, dy = u.y - ay; if (dx * dx + dy * dy > m2) continue;
+      const dx = u.x - ax, dy = u.y - ay; if (dx * dx + dy * dy > m2 && !(zone && zone[cellOf(u.x, u.y)])) continue;
       const m = dmgMult(w, u.cls); if (m <= 0) continue;
       const d = Math.sqrt((u.x - ex) * (u.x - ex) + (u.y - ey) * (u.y - ey));
       let s = d / (0.25 + m) + (u.wp ? 0 : 2); if (d < min) s += 40;
@@ -370,7 +380,7 @@ export function createSim(snap) {
     let t = e.tgt; if (t && t.dead) { t = e.tgt = null; e.fb = false; e.path = null; }
     const guard = e.mode === 'guard';
     if (!peace && (tick + e.id) % 4 === 0 && (!t || (!e.fb && (tick + e.id) % 12 === 0))) {
-      const c = guard ? acquire(e, wp, D.guardRange, e.hx, e.hy) : acquire(e, wp, wp.range + 2.5, e.x, e.y);
+      const c = guard ? acquire(e, wp, D.guardRange, e.hx, e.hy, zones[e.o]) : acquire(e, wp, wp.range + 2.5, e.x, e.y);
       if (c && c !== t) { e.tgt = t = c; e.fb = false; e.path = null; }
       else if (!c && t && !e.fb && !t.br) { t = e.tgt = null; e.path = null; }
     }
@@ -459,6 +469,54 @@ export function createSim(snap) {
     }
   }
 
+  // ---------- minefields and the A-bomb ----------
+  // A minefield goes off once, under the first hostile unit on the ground that enters its cell, and hits every hostile ground unit close by.
+  function blow(m) {
+    const bm = D.buildings.mine.boom, x = m.x + 0.5, y = m.y + 0.5, s2 = bm.splash * bm.splash;
+    m.dead = true; mAt[m.c] = -1; deadB.push(m.id);
+    ev.push({ k: 'mn', o: m.o, x, y });
+    for (const u of Us) if (!u.dead && !u.d.air && hostile(m.o, u.o) && (u.x - x) * (u.x - x) + (u.y - y) * (u.y - y) <= s2) hurt(m, u, bm.dmg * dmgMult(bm.w, u.cls));
+  }
+  function stepMines() {
+    for (const u of Us) {
+      if (u.dead || u.d.air) continue;
+      const k = mAt[cellOf(u.x, u.y)];
+      if (k >= 0 && hostile(u.o, Ms[k].o)) blow(Ms[k]);
+    }
+  }
+  // The bomb leaves the silo early in the battle, aimed at the densest cluster of the target's buildings, and lands a few seconds
+  // later: everything hostile in the inner part of the blast is destroyed, the rest of the blast takes heavy damage.
+  // The owner's side sees the place for a while afterwards.
+  const flares = [];
+  const nukes = peace ? [] : snap.players.map((p, pi) => p.nuke && pidx.has(p.nuke.to) ? { o: pi, to: pidx.get(p.nuke.to), st: 0 } : null).filter(Boolean);
+  function stepNukes() {
+    const NK = D.nuke;
+    for (const k of nukes) {
+      if (k.st === 0 && tick >= Math.round(NK.launch / dt)) {
+        const silo = Bs.find(b => b.o === k.o && b.t === 'silo' && !b.dead && !b.off);
+        // the aim: the middle of the building with the most of the target's base around it (a building counts when any part of it is in reach)
+        let best = null, bv = -1;
+        if (silo) for (const c of Bs) {
+          if (c.dead || c.o !== k.to || c.cls === 'wall') continue;
+          let v = 0; for (const e of Bs) if (!e.dead && e.o === k.to && e.cls !== 'wall' && rectDist(c.cx, c.cy, e) <= NK.r) v += e.mhp;
+          if (v > bv) { bv = v; best = c; }
+        }
+        if (!best) { k.st = 2; continue; }      // no silo or nothing to aim at: the bomb stays where it is
+        k.st = 1; k.x = best.cx; k.y = best.cy; P[k.o].nuked = true;
+        ev.push({ k: 'nl', o: k.o, to: k.to, x: silo.cx, y: silo.cy, tx: k.x, ty: k.y });
+      } else if (k.st === 1 && tick >= Math.round(NK.hit / dt)) {
+        k.st = 2;
+        const core = NK.r * NK.core, x = k.x, y = k.y, src = { o: k.o };
+        ev.push({ k: 'nk', o: k.o, to: k.to, x, y, r: NK.r });
+        flares.push({ ti: P[k.o].ti, x, y, r: NK.r + 2, until: tick + 200 });
+        const hit = (t, d) => { if (d <= core) hurt(src, t, t.hp + 1); else if (d <= NK.r) hurt(src, t, t.mhp * NK.edge); };
+        for (const b of Bs) if (!b.dead && hostile(k.o, b.o)) hit(b, rectDist(x, y, b));
+        for (const u of Us) if (!u.dead && hostile(k.o, u.o)) hit(u, Math.sqrt((u.x - x) * (u.x - x) + (u.y - y) * (u.y - y)));
+        for (const m of Ms) if (!m.dead && hostile(k.o, m.o) && rectDist(x, y, { x: m.x, y: m.y, w: 1, h: 1 }) <= core) { m.dead = true; mAt[m.c] = -1; deadB.push(m.id); }
+      }
+    }
+  }
+
   // ---------- aircraft ----------
   // as: 0 flying a mission or on call, 1 returning to the airfield, 2 re-arming on the pad, 3 parked for the rest of the round
   function stepAir(e) {
@@ -469,7 +527,7 @@ export function createSim(snap) {
     if (e.as === 2) { e.at -= dt; if (e.at <= 0) { e.ammo = d.ammo; e.as = e.over ? 3 : 0; e.landed = true; } return; }
     if (e.as === 1) { if (moveTo(e, e.hx, e.hy, d.speed)) { e.as = 2; e.at = d.rearm; } return; }
     let t = e.tgt; if (t && t.dead) t = e.tgt = null;
-    if (!peace && !t && (tick + e.id) % 4 === 0) t = e.tgt = e.mode === 'guard' ? acquire(e, wp, D.guardRange, e.hx, e.hy) : acquire(e, wp, wp.range + 4, e.x, e.y);
+    if (!peace && !t && (tick + e.id) % 4 === 0) t = e.tgt = e.mode === 'guard' ? acquire(e, wp, D.guardRange, e.hx, e.hy, zones[e.o]) : acquire(e, wp, wp.range + 4, e.x, e.y);
     if (t) {
       e.landed = false;
       if (distTo(e, t) <= wp.range && e.alt > 0.6) {
@@ -581,6 +639,7 @@ export function createSim(snap) {
     for (const b of Bs) if (!b.dead) stamp(vis[P[b.o].ti], n, b.cx, b.cy, b.d.sight + (b.w > 2 ? 1 : 0));
     for (const u of Us) if (!u.dead) stamp(vis[P[u.o].ti], n, u.x, u.y, u.d.sight);
     for (const q of Ns) if (q.o >= 0) stamp(vis[P[q.o].ti], n, q.cx, q.cy, q.d.sight);
+    for (const f of flares) if (tick <= f.until) stamp(vis[f.ti], n, f.x, f.y, f.r);
     for (let t = 0; t < NT; t++) { const v = vis[t], e = explored[t]; for (let c = 0; c < N; c++) if (v[c]) e[c] = 1; }
     for (const b of Bs) {
       if (b.dead) continue;
@@ -591,7 +650,7 @@ export function createSim(snap) {
   vision();
 
   const sim = {
-    n, Bs, Us, P, Brs, Ns, ore, blk, vis, explored, seen, teams, duration, peace,
+    n, Bs, Us, P, Brs, Ns, Ms, ore, blk, vis, explored, seen, teams, duration, peace,
     get ev() { return ev; }, get tick() { return tick; }, get time() { return tick * dt; },
     get done() { return tick * dt >= duration; },
     teamIndex: pi => P[pi].ti,
@@ -600,6 +659,8 @@ export function createSim(snap) {
       for (const b of Bs) if (!b.dead) stepBuilding(b);
       for (const u of Us) if (!u.dead) stepUnit(u);
       separate();
+      if (Ms.length && !peace) stepMines();
+      if (nukes.length) stepNukes();
       if (tick % 10 === 0) workshops();
       if (anyDead) { anyDead = false; for (let i = Us.length - 1; i >= 0; i--) if (Us[i].dead) Us.splice(i, 1); }
       if (tick % 5 === 0) vision();
@@ -612,7 +673,7 @@ export function createSim(snap) {
         hp, dead: deadB.slice(), ore: oreToStr(ore),
         bridges: Brs.map(b => b.dead ? 0 : Math.max(1, Math.round(b.hp))),      // in the order of the snapshot
         neut: Ns.map(q => q.o >= 0 ? P[q.o].id : 0),
-        players: P.map(p => ({ id: p.id, income: p.income, lost: p.lost, used: p.used, killed: p.killed, bLost: p.bLost, bKilled: p.bKilled,
+        players: P.map(p => ({ id: p.id, income: p.income, lost: p.lost, used: p.used, killed: p.killed, bLost: p.bLost, bKilled: p.bKilled, nuked: p.nuked,
           explored: packBits(explored[p.ti]), seen: [...seen[p.ti]] })),
       };
     },

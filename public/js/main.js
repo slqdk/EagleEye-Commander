@@ -1,6 +1,6 @@
 // EagleEye Commander — the client: menu, lobby, base building, attack planning and battle playback.
-import { DEFS } from '../shared/defs.js';
-import { powerState, buildBlock, trainBlock, makeOcc, placeBlock, hasOn, harvCount, sellValue, repairCost } from '../shared/engine.js';
+import { DEFS, isBase } from '../shared/defs.js';
+import { powerState, buildBlock, trainBlock, makeOcc, placeBlock, hasOn, harvCount, sellValue, repairCost, nukeState } from '../shared/engine.js';
 import { createSim, musterPositions, dockOf, assignGroups, bridgeAt } from '../shared/sim.js';
 import { generateMap } from '../shared/map.js';
 import { unpackBits, stamp } from '../shared/util.js';
@@ -18,7 +18,7 @@ const TOUCH = matchMedia('(pointer: coarse)').matches, MOUSE = matchMedia('(any-
 const R = new Renderer($('#map'));
 const st = { be: null, v: null, mode: 'menu', scene: null, ps: null, occ: null, ed: { mode: 'idle' }, sel: null, prod: { b: null, u: [] }, orders: [], editG: -1,
   rp: null, moneyShown: 0, knownPrev: new Set(), skew: 0, tab: 'B', busy: false, cam0: false, selU: new Set(), box: null, lastU: null, hoverG: -1,
-  bAnim: new Map(), sold: [], tweenOK: false, radarWas: null, radarT0: null, selBr: null, comm: false };
+  bAnim: new Map(), sold: [], tweenOK: false, radarWas: null, radarT0: null, selBr: null, comm: false, camp: null, campScroll: false };
 
 // ---------- small UI helpers ----------
 let toastT = 0;
@@ -111,7 +111,7 @@ function initMenu() {
   });
 }
 async function enter(be, v) {
-  st.be = be; st.v = null; st.rp = null; st.cam0 = false; st.knownPrev = new Set(); st.tweenOK = false; st.radarWas = null; st.radarT0 = null; st.bAnim.clear(); st.sold = []; music.setLevel(0);
+  st.be = be; st.v = null; st.rp = null; st.cam0 = false; st.camp = null; st.knownPrev = new Set(); st.tweenOK = false; st.radarWas = null; st.radarT0 = null; st.bAnim.clear(); st.sold = []; music.setLevel(0);
   applyView(v || await be.state(-1), true);
 }
 function leave() { closeModal(); music.setLevel(0); st.tweenOK = false; if (st.be) st.be.leave(); st.be = null; st.v = null; st.rp = null; st.scene = null; st.mode = 'menu'; show('menu'); const s = Local.load(); $('#btnContinue').hidden = !(s && s.game.phase === 'play'); if (s) $('#btnContinue').onclick = () => { unlock(); enter(s); }; refreshHub(); }
@@ -250,7 +250,7 @@ function applyView(v, first) {
   st.mode = 'plan'; rebuild();
   if (first && v.phase === 'play' && v.me && v.me.alive) setTimeout(() => say('hello'), 900);
   if (first && v.phase === 'over') showOver();
-  if ((first || (prev && prev.phase === 'lobby')) && v.phase === 'play' && v.round === 1 && LS.get('jf2-help') !== '4') { LS.set('jf2-help', '4'); setTimeout(showHelp, 400); }
+  if ((first || (prev && prev.phase === 'lobby')) && v.phase === 'play' && v.round === 1 && LS.get('jf2-help') !== '5') { LS.set('jf2-help', '5'); setTimeout(showHelp, 400); }
 }
 setInterval(async () => {
   if (!st.be || st.be.kind !== 'remote' || !st.v || st.busy || document.hidden) return;
@@ -292,7 +292,7 @@ function rebuild() {
   };
   if (m.alive) muster(m, st.ps, true);
   for (const a of v.allies) muster(a, powerState(a), false);
-  for (const b of B) if (!b.ghost && !b.gone && (!b.neutral || friends.has(b.o))) { const d = BN[b.t]; stamp(vis, n, b.x + d.w / 2, b.y + d.h / 2, d.sight + (d.w > 2 ? 1 : 0)); }
+  for (const b of B) if (!b.ghost && !b.gone && !BN[b.t].mine && (!b.neutral || friends.has(b.o))) { const d = BN[b.t]; stamp(vis, n, b.x + d.w / 2, b.y + d.h / 2, d.sight + (d.w > 2 ? 1 : 0)); }
   for (const u of Us) stamp(vis, n, u.x, u.y, UD[u.t].sight);
   for (let i = 0; i < vis.length; i++) if (vis[i]) explored[i] = 1;
   st.knownPrev = new Set(Object.keys(m.known).map(Number));
@@ -317,7 +317,9 @@ function rebuild() {
   if (radarOn && st.radarWas === false && st.tweenOK) { st.radarT0 = tnow; sfx('powerup'); }
   st.radarWas = radarOn; st.tweenOK = true;
   st.scene = { buildings: B, units: Us, ore: v.ore, bridges: v.bridges.map(b => ({ ...b, sel: st.selBr === b.id })), fog: m.alive || v.phase !== 'over' ? { explored, vis, key: 'p' + v.rev + ':' + st.orders.length } : null, colors, mine: o => friends.has(o),
-    radarOn, radarT0: st.radarT0, showGroups: true, overlay: planOverlay, hq: B.find(b => b.t === 'hq' && b.o === m.id) };
+    radarOn, radarT0: st.radarT0, showGroups: true, overlay: planOverlay, hq: B.find(b => b.t === 'hq' && b.o === m.id),
+    // the enemy camps I have found: a marker each on the radar, which opens the attack menu
+    camps: m.alive && v.phase === 'play' ? foes().map(p => { const c = campOf(p.id); return c && { id: p.id, name: p.name, x: c.x + 0.5, y: c.y + 0.5, color: p.color, on: st.camp === p.id && !$('#orders').hidden, atk: st.orders.some(o => o.camp === p.id && (Object.keys(o.units).length || o.nuke)) }; }).filter(Boolean) : [] };
   if (v.phase === 'over' || !m.alive) st.scene.radarOn = true;
   renderTop(); renderSide(); renderInfo(); renderOrders(); renderBanner();
 }
@@ -326,7 +328,7 @@ function rebuild() {
 function renderTop() {
   const v = st.v, m = v.me, replay = st.mode === 'replay';
   $('#roundInfo').innerHTML = `Runde ${replay && st.rp ? st.rp.snap.round : v.round}${v.peaceLeft > 0 && !replay ? `<small>våbenhvile</small>` : ''}`;
-  $('#pips').innerHTML = v.players.map(p => `<span class="pip ${p.alive ? '' : 'dead'} ${p.ready ? 'rdy' : ''}" title="${esc(p.name)}"><i style="background:${DEFS.colors[p.color].main}">${p.ready ? '✓' : ''}</i><span>${esc(p.name)}</span></span>`).join('');
+  $('#pips').innerHTML = v.players.map(p => `<span class="pip ${p.alive ? '' : 'dead'} ${p.ready ? 'rdy' : ''}" title="${esc(p.name)}"><i style="background:${DEFS.colors[p.color].main}">${p.ready ? '✓' : ''}</i><span>${esc(p.name)}</span>${p.atom != null ? `<em title="${p.atom ? 'A-bombe klar om ' + p.atom + (p.atom === 1 ? ' runde' : ' runder') : 'A-bomben er klar'}">☢${p.atom || ''}</em>` : ''}</span>`).join('');
   const b = $('#btnReady'), can = v.phase === 'play' && m && m.alive && !replay;
   b.disabled = !can; b.textContent = !can ? (replay ? 'KAMP I GANG' : v.phase === 'over' ? 'KAMPEN ER SLUT' : 'SLÅET UD') : m.ready ? 'VENTER … (fortryd)' : 'KLAR TIL KAMP';
   b.classList.toggle('wait', !!(can && m.ready)); b.classList.toggle('go', !(can && m.ready));
@@ -362,7 +364,7 @@ function renderSide() {
   const mk = (kind, t, d, why, cnt, minus) => `<button class="cameo ${why ? 'locked' : ''} ${!why && m.money < d.cost ? 'poor' : ''}" data-k="${kind}:${t}"><img src="${cameoURL(t, m.faction, m.color)}" alt="" draggable="false"><span class="cost">${d.cost}</span>${cnt ? `<span class="cnt">${cnt}</span>` : ''}<span class="st"></span><i class="wipe"></i><span class="nm">${d.name}</span>${minus ? `<span class="minus" data-minus="${t}">−</span>` : ''}</button>`;
   let hb = '', hu = '';
   const hq = m.buildings.some(b => b.t === 'hq');
-  for (const t in BD) { const d = BD[t]; if (!d.f.includes(m.faction)) continue; if (d.only === 'nohq' && hq) continue; if (d.only !== 'nohq' && !hq) continue; hb += mk('b', t, d, buildBlock(m, t, ps)); }
+  for (const t in BD) { const d = BD[t]; if (!d.f.includes(m.faction)) continue; if (d.only === 'nohq' && hq) continue; if (d.only !== 'nohq' && !hq) continue; hb += mk('b', t, d, buildBlock(m, t, ps), d.mine ? m.buildings.filter(b => b.t === t).length : 0); }
   for (const t in UD) { const d = UD[t]; if (!d.f.includes(m.faction)) continue; hu += mk('u', t, d, trainBlock(m, t, ps), m.army[t] | 0, (m.trained[t] | 0) > 0); }
   $('#colB').innerHTML = hb; $('#colU').innerHTML = hu;
   camEls.clear(); for (const el of $$('.cameo')) camEls.set(el.dataset.k, el);
@@ -427,13 +429,15 @@ $('#build').addEventListener('pointermove', e => {
   const el = e.target.closest('.cameo'), tip = $('#tip'); if (!el || e.pointerType !== 'mouse') { tip.hidden = true; return; }
   const [kind, t] = el.dataset.k.split(':'), d = kind === 'b' ? BD[t] : UD[t], m = me(), why = kind === 'b' ? buildBlock(m, t, st.ps) : trainBlock(m, t, st.ps), w = d.weapon;
   const stats = kind === 'b' ? `Styrke ${d.hp}` + (d.power ? ` · strøm ${d.power > 0 ? '+' : ''}${d.power}` : '') : `Styrke ${d.hp} · fart ${d.speed}`;
-  tip.innerHTML = `<b>${d.name} · ${d.cost}</b>${esc(d.desc)}<div class="st">${stats}${w ? ` · skade ${w.dmg} · rækkevidde ${w.range}` : ''}</div>${why ? `<div class="rq">${esc(why)}</div>` : ''}`;
+  tip.innerHTML = `<b>${d.name} · ${d.cost}</b>${esc(d.desc)}<div class="st">${stats}${w ? ` · skade ${w.dmg} · rækkevidde ${w.range}` : ''}${d.boom ? ` · skade ${d.boom.dmg} · højst ${DEFS.mineCap}` : ''}</div>${why ? `<div class="rq">${esc(why)}</div>` : ''}`;
   tip.hidden = false; const r = el.getBoundingClientRect(); tip.style.left = Math.max(6, r.left - tip.offsetWidth - 12) + 'px'; tip.style.top = Math.max(6, Math.min(innerHeight - tip.offsetHeight - 6, r.top)) + 'px';
 });
 $('#build').addEventListener('pointerleave', () => $('#tip').hidden = true);
 
 // ---------- placing, selling, repairing ----------
-function cancelEdit() { st.ed = { mode: 'idle' }; $('#placebar').hidden = true; $('#map').className = ''; if (st.v && st.mode === 'plan') { renderBanner(); $('#mRepair').classList.remove('on'); $('#mSell').classList.remove('on'); } if (st.scene && st.mode === 'plan' && st.selU.size) renderInfo(); }
+function cancelEdit() {
+  if (st.ed.mode === 'place' && st.ed.more) st.prod.b = null;      // walls and minefields: enough of them have been laid
+  st.ed = { mode: 'idle' }; $('#placebar').hidden = true; $('#map').className = ''; if (st.v && st.mode === 'plan') { renderBanner(); $('#mRepair').classList.remove('on'); $('#mSell').classList.remove('on'); } if (st.scene && st.mode === 'plan' && st.selU.size) renderInfo(); }
 function startPlace(t) {
   if (st.mode !== 'plan') return;
   st.sel = null; st.selU.clear(); for (const u of st.scene.units) u.sel = false; $('#info').hidden = true; $('#orders').hidden = true; st.editG = -1;
@@ -452,11 +456,11 @@ async function confirmPlace() {
   if (!e.ok) { say('cant'); return toast(e.why, true); }
   const t = e.t, wasLow = st.ps.use > st.ps.prod;
   if (!await doAct({ a: 'build', t, x: e.x, y: e.y })) return;
-  const nb = me().buildings.reduce((a, q) => q.id > a.id ? q : a), d = BD[t], an = { k: 'build', t0: performance.now() / 1000, dur: d.wall ? 0.35 : 0.55 + 0.25 * Math.sqrt(d.w * d.h) };
+  const nb = me().buildings.reduce((a, q) => q.id > a.id ? q : a), d = BD[t], small = d.wall || d.mine, an = { k: 'build', t0: performance.now() / 1000, dur: small ? 0.35 : 0.55 + 0.25 * Math.sqrt(d.w * d.h) };
   st.bAnim.set(nb.id, an); const sb = st.scene.buildings.find(q => q.id === nb.id); if (sb) sb.an = an;
-  sfx(d.wall ? 'place' : 'construct', an.dur);
+  sfx(small ? 'place' : 'construct', an.dur);
   if (st.ps.use > st.ps.prod && !wasLow) say('lowpower'); else if (t === 'rad') say('radar');
-  if (BD[t].wall && me().money >= BD[t].cost) { st.ed.x = null; return; }   // walls: keep placing
+  if (small && me().money >= d.cost && !buildBlock(me(), t, st.ps)) { st.ed.x = null; st.ed.more = true; return; }   // walls and minefields: keep placing
   st.prod.b = null; cancelEdit(); renderSide();
 }
 function setTool(mode) { unlock(); if (st.mode !== 'plan') return; const on = st.ed.mode === mode; cancelEdit(); if (!on) { st.ed = { mode }; $('#map').className = mode; st.sel = null; st.selU.clear(); rebuild(); } renderSide(); renderBanner(); sfx('click'); }
@@ -468,7 +472,7 @@ async function sellBuilding(id) {
   const info = { t: b.t, x: b.x, y: b.y, hp: b.hp }, val = sellValue(b), d = BD[b.t];
   if (st.sel === id) st.sel = null;
   if (!await doAct({ a: 'sell', id })) return;
-  const ghost = { id: -id, t: info.t, x: info.x, y: info.y, hp: info.hp, mhp: d.hp, o: m.id, off: false, ghost: false, gone: true, an: { k: 'sell', t0: performance.now() / 1000, dur: d.wall ? 0.3 : 0.75 } };
+  const ghost = { id: -id, t: info.t, x: info.x, y: info.y, hp: info.hp, mhp: d.hp, o: m.id, off: false, ghost: false, gone: true, an: { k: 'sell', t0: performance.now() / 1000, dur: d.wall || d.mine ? 0.3 : 0.75 } };
   st.sold.push(ghost); st.scene.buildings.push(ghost);
   sfx('sink'); sfx('sell'); say('sold'); R.fx.push({ k: 'tx', x: info.x + d.w / 2, y: info.y + d.h / 2, txt: '+' + val, t0: R.t, life: 1.3 });
 }
@@ -476,7 +480,7 @@ async function sellBuilding(id) {
 function tickAnims(now) {
   for (const [id, a] of st.bAnim) {
     if (now < a.t0 + a.dur) continue;
-    st.bAnim.delete(id); const b = st.scene.buildings.find(q => q.id === id); if (!b || BD[b.t].wall) continue; const d = BD[b.t];
+    st.bAnim.delete(id); const b = st.scene.buildings.find(q => q.id === id); if (!b || BD[b.t].wall || BD[b.t].mine) continue; const d = BD[b.t];
     sfx('place'); R.fx.push({ k: 'fl', x: b.x + d.w / 2, y: b.y + d.h / 2, z: 0.9, r: 0.55, t0: R.t, life: 0.2, col: '#fff7c0' });
     for (let i = 0; i < 4 + d.w * d.h; i++) R.puff(b.x + Math.random() * d.w, b.y + d.h * (0.6 + Math.random() * 0.4), 0.05, '#e9e2c8', 0.2, 0.6, 0.3, (Math.random() - 0.5) * 1.8, 0.25);
   }
@@ -526,51 +530,137 @@ function renderInfo() {
     return;
   }
   const d = BD[b.t], mine = b.o === me().id, owner = st.v.players.find(p => p.id === b.o), real = mine && me().buildings.find(q => q.id === b.id);
+  const foe = !mine && owner && owner.alive && me().alive && st.v.phase === 'play' && !sameTeam(owner, me());
+  let bomb = '';
+  if (real && b.t === 'silo') { const ns = nukeState(me(), st.v.round, st.ps); bomb = `<p><b style="color:var(--gold)">☢ ${!ns.on ? 'Mangler strøm: bomben kan ikke bruges.' : ns.ready ? 'A-bomben er klar. Sæt den på et angreb mod en lejr under Angreb.' : 'A-bomben er klar i runde ' + ns.at + ' (om ' + ns.left + (ns.left === 1 ? ' runde' : ' runder') + ').'}</b> Alle generaler kan se, at den er på vej.</p>`; }
   el.hidden = false;
   el.innerHTML = `<h3>${d.name}<button class="btn small" id="inX">Luk</button></h3>${mine ? '' : `<div style="color:${DEFS.colors[owner.color].light}">${esc(owner.name)} · ${DEFS.factions[owner.faction].name}${b.ghost ? ' · sidst set' : ''}</div>`}
     ${b.ghost ? '' : `<div class="hp"><i style="width:${b.hp / b.mhp * 100}%;background:${b.hp > b.mhp / 2 ? 'var(--go)' : b.hp > b.mhp / 4 ? 'var(--gold)' : 'var(--bad)'}"></i></div>`}
-    <p>${esc(d.desc)}${b.off ? ' <b style="color:var(--gold)">Slukket: mangler strøm.</b>' : ''}</p>
-    ${real ? `<div class="row">${real.hp < d.hp ? `<button class="btn small gold" id="inRep">Reparér (${fmt(repairCost(real))})</button>` : ''}<button class="btn small warn" id="inSell">Sælg (+${fmt(sellValue(real))})</button></div>` : ''}`;
+    <p>${esc(d.desc)}${b.off ? ' <b style="color:var(--gold)">Slukket: mangler strøm.</b>' : ''}</p>${bomb}
+    ${real ? `<div class="row">${real.hp < d.hp ? `<button class="btn small gold" id="inRep">Reparér (${fmt(repairCost(real))})</button>` : ''}<button class="btn small warn" id="inSell">${d.mine ? 'Tag op' : 'Sælg'} (+${fmt(sellValue(real))})</button></div>` : ''}
+    ${foe ? `<div class="row"><button class="btn small gold" id="inCamp">${esc(gen(owner.name))} lejr: spionér eller angrib</button></div>` : ''}`;
   $('#inX').onclick = () => { st.sel = null; rebuild(); };
+  if ($('#inCamp')) $('#inCamp').onclick = () => openCamp(owner.id);
   if ($('#inRep')) $('#inRep').onclick = () => doAct({ a: 'repair', id: b.id }).then(ok => ok && (sfx('ready'), say('repair')));
   if ($('#inSell')) $('#inSell').onclick = () => sellBuilding(b.id);
 }
 
 // ---------- attack orders ----------
+// An attack is a group of units with a target: an enemy camp picked from the list or the radar (the way it was done
+// in the first version of the game), or a place on the map that the group was sent to by hand.
 const avail = (t, gi) => (me().army[t] | 0) - st.orders.reduce((s, o, i) => s + (i === gi ? 0 : (o.units[t] | 0)), 0);
 const combatTypes = () => Object.keys(me().army).filter(t => !UD[t].harv && me().army[t] > 0);
-async function sendOrders() { const g = st.editG, mode = st.ed.mode; if (await doAct({ a: 'orders', orders: st.orders })) { st.editG = g; if (mode === 'route') st.ed = { mode: 'route' }; renderOrders(); renderBanner(); } }
+const gen = name => name + (/[sxz]$/i.test(name) ? "'" : 's');      // Danish possessive
+const foes = () => st.v.players.filter(p => p.alive && p.id !== me().id && !sameTeam(p, me()));
+// What I know of a general's camp: the buildings my troops or a spy have seen, and the cell an attack is sent to.
+function campOf(pid) {
+  const list = Object.values(me().known).filter(k => k.o === pid); if (!list.length) return null;
+  const hq = list.find(k => k.t === 'hq'), src = hq ? [hq] : list.some(k => isBase(k.t)) ? list.filter(k => isBase(k.t)) : list;
+  let x = 0, y = 0; for (const k of src) { x += k.x + BD[k.t].w / 2; y += k.y + BD[k.t].h / 2; }
+  return { x: Math.floor(x / src.length), y: Math.floor(y / src.length), n: list.length };
+}
+// groups without units go away again (an A-bomb may stand alone)
+function pruneOrders() { const k = st.orders.length; st.orders = st.orders.filter(o => Object.keys(o.units).length || o.nuke); if (st.editG >= st.orders.length) st.editG = -1; return st.orders.length !== k; }
+async function sendOrders() {
+  const g = st.editG, mode = st.ed.mode;
+  if (await doAct({ a: 'orders', orders: st.orders })) { st.editG = g < st.orders.length ? g : -1; if (mode === 'route') st.ed = { mode: 'route' }; renderOrders(); renderBanner(); }
+  else { st.orders = JSON.parse(JSON.stringify(me().orders)); if (st.editG >= st.orders.length) st.editG = -1; rebuild(); }      // the game said no: back to what it holds
+}
 function renderOrders() {
   const el = $('#orders'); if (el.hidden || st.mode !== 'plan') { el.hidden = true; return; }
-  const m = me(), types = combatTypes();
-  const sum = o => Object.entries(o.units).map(([t, c]) => c + '× ' + UD[t].name).join(', ') || 'ingen enheder';
-  let h = `<h3>Angrebsordrer<button class="btn small" id="orX">Luk</button></h3><div class="hint">${st.v.peaceLeft > 0 ? 'Der er våbenhvile, så grupperne kan kun spejde.' : 'Grupperne kører af sted, når runden afvikles. Resten bliver hjemme og forsvarer.'}</div>`;
+  const v = st.v, m = me(), types = combatTypes(), peace = v.peaceLeft > 0, radar = hasOn(m, 'rad', st.ps), ns = nukeState(m, v.round, st.ps), list = foes();
+  const sum = o => Object.entries(o.units).map(([t, c]) => c + '× ' + UD[t].name).join(', ') || (o.nuke ? 'kun bomben' : 'ingen enheder');
+  const nameOf = id => { const p = v.players.find(q => q.id === id); return p ? p.name : '?'; };
+  let h = `<h3>Angreb<button class="btn small" id="orX">Luk</button></h3><div class="sec">Fjendens lejre</div>`;
+  if (!radar && list.length) h += `<div class="hint">Med en radarstation kan du spionere dig frem til fjendens lejre og angribe dem herfra. Lejre, som dine tropper selv får øje på, kommer også på listen.</div>`;
+  for (const p of list) {
+    const c = campOf(p.id), it = (m.intel || {})[p.id], gi = st.orders.findIndex(o => o.camp === p.id), age = it ? v.round - it.round : 0;
+    const army = it ? Object.entries(it.army).filter(([t]) => UD[t] && !UD[t].harv) : [], cnt = army.reduce((s, [, k]) => s + k, 0);
+    const status = !c ? 'Ikke fundet endnu' : !it ? `Fundet: ${c.n} ${c.n === 1 ? 'bygning' : 'bygninger'} set`
+      : `Spioneret ${age ? 'for ' + age + (age === 1 ? ' runde' : ' runder') + ' siden' : 'i denne runde'}: ${c.n} ${c.n === 1 ? 'bygning' : 'bygninger'}, ${cnt ? cnt + (cnt === 1 ? ' enhed' : ' enheder') : 'ingen hær'}`;
+    h += `<div class="camp ${st.camp === p.id ? 'on' : ''}"><div class="hd"><i class="chip" style="background:${DEFS.colors[p.color].main}"></i><span class="sum"><b>${esc(p.name)}</b>${p.kind === 'ai' ? ' <em>AI</em>' : ''}${p.atom != null ? ` <em class="atom" title="${p.atom ? 'A-bombe klar om ' + p.atom + (p.atom === 1 ? ' runde' : ' runder') : 'A-bomben er klar'}">☢ ${p.atom ? 'om ' + p.atom : 'klar'}</em>` : ''}<small>${DEFS.factions[p.faction].name} · ${status}</small>${cnt ? `<small>${army.map(([t, k]) => k + '× ' + UD[t].name).join(', ')}</small>` : ''}</span></div>
+      <div class="row">${radar ? `<button class="btn small" data-spy="${p.id}" ${m.money < DEFS.spyCost ? 'disabled' : ''}>${it ? 'Nyt billede' : 'Spionér'} · ${DEFS.spyCost}</button>` : ''}${c ? `<button class="btn small gold" data-atk="${p.id}">${gi >= 0 ? 'Ret angrebet' : 'Angrib'}</button><button class="btn small" data-see="${p.id}">Vis</button>` : ''}</div></div>`;
+  }
+  if (!list.length) h += `<div class="hint">Der er ingen fjender tilbage.</div>`;
+  h += `<div class="sec">Dine angreb</div><div class="hint">${peace ? 'Der er våbenhvile, så grupperne kan kun spejde.' : 'Højst ' + DEFS.maxOrders + ' pr. runde. De rykker ud, når runden afvikles. Alle andre bliver hjemme og forsvarer basen.'}</div>`;
   st.orders.forEach((o, i) => {
     const ed = i === st.editG;
-    h += `<div class="grp ${ed ? 'ed' : ''}"><div class="hd"><span class="dot" style="background:${GROUP_COL[i]}">${i + 1}</span><span class="sum">${sum(o)}<small>${o.pts.length ? 'mål sat' + (o.pts.length > 1 ? ' · ' + (o.pts.length - 1) + ' rutepunkt' + (o.pts.length > 2 ? 'er' : '') : '') : 'intet mål endnu'}</small></span>
+    const where = o.camp ? 'mod ' + esc(gen(nameOf(o.camp))) + ' lejr' + (o.nuke ? ' · <b class="atom">☢ med A-bombe</b>' : '')
+      : o.pts.length ? 'mål på kortet' + (o.pts.length > 1 ? ' · ' + (o.pts.length - 1) + ' rutepunkt' + (o.pts.length > 2 ? 'er' : '') : '') : 'intet mål endnu';
+    h += `<div class="grp ${ed ? 'ed' : ''}"><div class="hd"><span class="dot" style="background:${GROUP_COL[i]}">${i + 1}</span><span class="sum">${sum(o)}<small>${where}</small></span>
       <button class="btn small" data-ed="${i}">${ed ? 'Færdig' : 'Redigér'}</button><button class="btn small warn" data-del="${i}">Slet</button></div>`;
     if (ed) {
-      h += types.map(t => { const a = avail(t, i), c = o.units[t] | 0; return `<div class="urow"><span>${UD[t].name}</span><button class="btn small" data-u="${t}" data-d="-1">−</button><b>${c}/${a}</b><button class="btn small" data-u="${t}" data-d="1">+</button><button class="btn small" data-u="${t}" data-d="99">alle</button></div>`; }).join('');
-      h += `<div class="hint">Klik på kortet: første klik er målet. Flere klik lægger ruten (det sidste er målet).</div><div class="row"><button class="btn small" data-all="${i}">Tag alle ledige</button><button class="btn small" data-undo="${i}" ${o.pts.length ? '' : 'disabled'}>Fortryd punkt</button></div>`;
+      h += types.map(t => { const a = avail(t, i), c = o.units[t] | 0; return `<div class="urow"><span>${UD[t].name}</span><button class="btn small" data-u="${t}" data-d="-1" aria-label="Færre">−</button><b>${c}/${a}</b><button class="btn small" data-u="${t}" data-d="1" aria-label="Flere">+</button><button class="btn small" data-u="${t}" data-d="99">alle</button></div>`; }).join('');
+      if (o.camp && ns.built) {
+        const other = st.orders.some((q, j) => j !== i && q.nuke), can = ns.ready && !other && !peace;
+        const why = !ns.on ? 'Raketsiloen mangler strøm.' : !ns.ready ? 'Klar i runde ' + ns.at + '.' : peace ? 'Kan ikke bruges under våbenhvilen.' : other ? 'Den er allerede sat på et andet angreb.' : 'Rammer den tætteste klynge af bygninger i lejren, lige når slaget begynder.';
+        h += `<div class="nuke ${can || o.nuke ? '' : 'dis'}"><button type="button" class="sw ${o.nuke ? 'on' : ''}" data-nuke="${i}" role="switch" aria-checked="${!!o.nuke}" aria-label="Brug A-bomben" ${can || o.nuke ? '' : 'disabled'}><i></i></button><span><b>☢ Brug A-bomben</b><small>${why}</small></span></div>`;
+      }
+      h += o.camp ? `<div class="hint">${types.length ? 'Vælg, hvor mange der skal af sted mod lejren.' : 'Du har ingen kampenheder endnu. Træn nogle i kasernen.'}</div><div class="row"><button class="btn small" data-all="${i}">Tag alle ledige</button><button class="btn small" data-none="${i}">Ingen</button></div>`
+        : `<div class="hint">Klik på kortet: første klik er målet. Flere klik lægger ruten (det sidste er målet).</div><div class="row"><button class="btn small" data-all="${i}">Tag alle ledige</button><button class="btn small" data-undo="${i}" ${o.pts.length ? '' : 'disabled'}>Fortryd punkt</button></div>`;
     }
     h += '</div>';
   });
-  if (st.orders.length < DEFS.maxOrders) h += `<div class="acts" style="justify-content:flex-start"><button class="btn gold" id="orNew" ${types.length ? '' : 'disabled'}>+ Ny angrebsgruppe</button></div>`;
-  if (!types.length) h += `<div class="hint">Du har ingen kampenheder endnu. Træn nogle i kasernen.</div>`;
+  if (!st.orders.length) h += `<div class="hint">Ingen angreb planlagt endnu.</div>`;
+  if (st.orders.length < DEFS.maxOrders) h += `<div class="acts" style="justify-content:flex-start"><button class="btn small" id="orNew" ${types.length ? '' : 'disabled'}>+ Gruppe med mål på kortet</button></div>`;
   el.innerHTML = h;
+  if (st.campScroll) { st.campScroll = false; const on = el.querySelector('.grp.ed') || el.querySelector('.camp.on'); if (on) on.scrollIntoView({ block: 'nearest' }); }
+}
+// Spy on a general: his camp is found (or the picture of it is renewed), and the map jumps there.
+async function spyOn(id) {
+  const p = st.v.players.find(q => q.id === id), had = !!campOf(id); if (!p || !await doAct({ a: 'spy', id })) return;
+  const c = campOf(id); st.camp = id; sfx('powerup'); say('spy');
+  if (c) { R.cam.x = c.x + 0.5; R.cam.y = c.y + 0.5; R.pings.push({ x: c.x + 0.5, y: c.y + 0.5, t0: R.t }); }
+  toast(had ? 'Nyt billede af ' + gen(p.name) + ' lejr.' : gen(p.name) + ' lejr er fundet.');
+  rebuild();
+}
+// Open the attack on a camp: the menu where the number of each kind of unit is chosen.
+function attackCamp(id) {
+  const c = campOf(id); if (!c) return toast('Du har ikke fundet den lejr endnu.', true);
+  let gi = st.orders.findIndex(o => o.camp === id);
+  if (gi < 0) {
+    pruneOrders();
+    if (st.orders.length >= DEFS.maxOrders) { renderOrders(); return toast('Højst ' + DEFS.maxOrders + ' angreb pr. runde. Slet et af dem først.', true); }
+    st.orders.push({ units: {}, pts: [[c.x, c.y]], camp: id }); gi = st.orders.length - 1;
+  }
+  cancelEdit(); st.sel = null; st.selBr = null; st.selU.clear(); $('#info').hidden = true;
+  st.camp = id; st.campScroll = true; st.editG = gi; $('#orders').hidden = false; renderSide();
+  sendOrders();
+}
+// A camp was picked on the radar or on the map: go there and show it in the attack menu.
+function openCamp(id) {
+  unlock(); if (st.mode !== 'plan') return;
+  const c = campOf(id); if (c) { R.cam.x = c.x + 0.5; R.cam.y = c.y + 0.5; }
+  cancelEdit(); st.sel = null; st.selBr = null; st.selU.clear(); $('#info').hidden = true;
+  st.camp = id; st.campScroll = true; st.editG = st.orders.findIndex(o => o.camp === id); $('#orders').hidden = false; sfx('click'); rebuild(); renderSide();
 }
 $('#orders').onclick = e => {
   const b = e.target.closest('button'); if (!b) return; sfx('click');
-  if (b.id === 'orX') { $('#orders').hidden = true; st.editG = -1; cancelEdit(); renderSide(); return; }
-  if (b.id === 'orNew') { const units = {}; for (const t of combatTypes()) { const a = avail(t, -1); if (a > 0) units[t] = a; } st.orders.push({ units, pts: [] }); st.editG = st.orders.length - 1; st.ed = { mode: 'route' }; $('#map').className = 'route'; return sendOrders(); }
-  if (b.dataset.ed != null) { const i = +b.dataset.ed; if (st.editG === i) { st.editG = -1; cancelEdit(); say('orders'); } else { st.editG = i; st.ed = { mode: 'route' }; $('#map').className = 'route'; } renderOrders(); renderBanner(); return; }
+  if (b.id === 'orX') { $('#orders').hidden = true; st.editG = -1; cancelEdit(); if (pruneOrders()) sendOrders(); else rebuild(); renderSide(); return; }
+  if (b.dataset.spy) return spyOn(+b.dataset.spy);
+  if (b.dataset.atk) return attackCamp(+b.dataset.atk);
+  if (b.dataset.see) { const c = campOf(+b.dataset.see); if (c) { R.cam.x = c.x + 0.5; R.cam.y = c.y + 0.5; } st.camp = +b.dataset.see; rebuild(); return; }
+  if (b.id === 'orNew') { pruneOrders(); const units = {}; for (const t of combatTypes()) { const a = avail(t, -1); if (a > 0) units[t] = a; } st.orders.push({ units, pts: [] }); st.editG = st.orders.length - 1; st.ed = { mode: 'route' }; $('#map').className = 'route'; return sendOrders(); }
+  if (b.dataset.ed != null) {
+    const i = +b.dataset.ed;
+    if (st.editG === i) { st.editG = -1; cancelEdit(); say('orders'); if (pruneOrders()) return sendOrders(); }
+    else { st.editG = i; if (st.orders[i].camp) { cancelEdit(); st.camp = st.orders[i].camp; } else { st.ed = { mode: 'route' }; $('#map').className = 'route'; } }
+    rebuild(); return;
+  }
   if (b.dataset.del != null) { st.orders.splice(+b.dataset.del, 1); st.editG = -1; cancelEdit(); return sendOrders(); }
   const o = st.orders[st.editG]; if (!o) return;
   if (b.dataset.u) { const t = b.dataset.u, a = avail(t, st.editG), c = Math.max(0, Math.min(a, (o.units[t] | 0) + +b.dataset.d)); if (c) o.units[t] = c; else delete o.units[t]; if (o.slots) delete o.slots[t]; return sendOrders(); }
-  if (b.dataset.all != null) { for (const t of combatTypes()) { const a = avail(t, st.editG); if (a > 0) o.units[t] = a; } delete o.slots; return sendOrders(); }
+  if (b.dataset.all != null) { for (const t of combatTypes()) { if (o.camp && UD[t].eng) continue; const a = avail(t, st.editG); if (a > 0) o.units[t] = a; } delete o.slots; return sendOrders(); }
+  if (b.dataset.none != null) { o.units = {}; delete o.slots; return sendOrders(); }
+  if (b.dataset.nuke != null) { if (o.nuke) delete o.nuke; else o.nuke = true; return sendOrders(); }
   if (b.dataset.undo != null) { o.pts.pop(); return sendOrders(); }
 };
-$('#mOrders').onclick = () => { unlock(); if (st.mode !== 'plan') return; if (st.selU.size) return startSend(); const el = $('#orders'), open = el.hidden; cancelEdit(); st.sel = null; if (st.selU.size) { st.selU.clear(); rebuild(); } $('#info').hidden = true; el.hidden = !open; st.editG = -1; if (open && !st.orders.length && combatTypes().length) { el.hidden = false; renderOrders(); $('#orNew').click(); } else renderOrders(); renderSide(); sfx('click'); };
+$('#mOrders').onclick = () => {
+  unlock(); if (st.mode !== 'plan') return; if (st.selU.size) return startSend();
+  const el = $('#orders'), open = el.hidden; cancelEdit(); st.sel = null; st.selBr = null; $('#info').hidden = true; el.hidden = !open; st.editG = -1; sfx('click');
+  if (!open && pruneOrders()) sendOrders(); else rebuild();
+  renderSide();
+};
 
 // The heaviest unit in a selection is the one that answers on the radio.
 const leadType = units => units.reduce((a, u) => !a || UD[u.t].cost > UD[a].cost ? u.t : a, null);
@@ -617,11 +707,11 @@ function finishBox(add) {
 // Write down exactly which units each group holds, as shown on the map.
 function explicitOrders() {
   const mine = st.scene.units.filter(u => u.pick);
-  return st.orders.map((o, i) => { const units = {}, slots = {}; for (const u of mine) if (u.g === i) { units[u.t] = (units[u.t] | 0) + 1; (slots[u.t] || (slots[u.t] = [])).push(u.i); } return { units, slots, pts: o.pts }; });
+  return st.orders.map((o, i) => { const units = {}, slots = {}; for (const u of mine) if (u.g === i) { units[u.t] = (units[u.t] | 0) + 1; (slots[u.t] || (slots[u.t] = [])).push(u.i); } return { units, slots, pts: o.pts, ...(o.camp ? { camp: o.camp } : {}), ...(o.nuke ? { nuke: true } : {}) }; });
 }
 function pullOut(orders, sel) {
   for (const o of orders) for (const u of sel) { const l = o.slots[u.t], k = l ? l.indexOf(u.i) : -1; if (k >= 0) { l.splice(k, 1); if (!--o.units[u.t]) { delete o.units[u.t]; delete o.slots[u.t]; } } }
-  return orders.filter(o => Object.keys(o.units).length);
+  return orders.filter(o => Object.keys(o.units).length || o.nuke);
 }
 function giveOrder(cx, cy, append) {
   const mine = st.scene.units.filter(u => u.pick), sel = mine.filter(u => st.selU.has(u.key)); if (!sel.length) return;
@@ -634,10 +724,11 @@ function giveOrder(cx, cy, append) {
     const units = {}, slots = {}; for (const u of sel) { units[u.t] = (units[u.t] | 0) + 1; (slots[u.t] || (slots[u.t] = [])).push(u.i); }
     orders.push({ units, slots, pts: [] }); gi = orders.length - 1;
   } else orders = orders.map((o, i) => i === gi || Object.keys(o.units).length ? o : { ...o, units: {}, slots: {} });
-  const o = orders[gi];
+  const o = orders[gi], bomb = !!o.nuke;
+  delete o.camp; delete o.nuke;      // a place on the map is the target now, not a camp
   if (append && o.pts.length) { if (o.pts.length >= DEFS.maxPts) return toast('Højst ' + DEFS.maxPts + ' punkter pr. rute.', true); o.pts = [...o.pts, [cx, cy]]; } else o.pts = [[cx, cy]];
   st.orders = orders; st.editG = -1; sfx('click'); unitSay(leadType(sel), 'g');
-  toast('Gruppe ' + (gi + 1) + ': ' + sel.length + (sel.length === 1 ? ' enhed' : ' enheder') + (st.v.peaceLeft > 0 ? ' spejder, når runden afvikles' : ' rykker ud, når runden afvikles'));
+  toast('Gruppe ' + (gi + 1) + ': ' + sel.length + (sel.length === 1 ? ' enhed' : ' enheder') + (st.v.peaceLeft > 0 ? ' spejder, når runden afvikles' : ' rykker ud, når runden afvikles') + (bomb ? '. A-bomben er taget af gruppen' : ''));
   R.fx.push({ k: 'fl', x: cx + 0.5, y: cy + 0.5, z: 0, r: 0.55, t0: R.t, life: 0.3, col: '#b6ffa8' });
   sendOrders();
 }
@@ -656,7 +747,7 @@ function planOverlay(g, X, Y, Z, dpr) {
   st.orders.forEach((o, i) => {
     if (!o.pts.length) return;
     const mem = st.scene.units.filter(u => u.pick && u.g === i), n = mem.length, c = GROUP_COL[i], tg = o.pts[o.pts.length - 1], px = X(tg[0] + 0.5), py = Y(tg[1] + 0.5), on = focus.has(i);
-    if (!n && i !== st.editG) return;
+    if (!n && i !== st.editG && !o.nuke) return;
     if (on && n) {
       let sx = 0, sy = 0; for (const u of mem) { sx += u.x; sy += u.y; } sx /= n; sy /= n;
       const pts = [[sx, sy], ...o.pts.map(q => [q[0] + 0.5, q[1] + 0.5])];
@@ -675,12 +766,23 @@ function planOverlay(g, X, Y, Z, dpr) {
     g.lineWidth = 4.5 * f; g.strokeStyle = OUT; g.stroke(); g.fillStyle = c; g.fill();
     g.font = `900 ${11 * f}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = OUT; g.fillText(String(i + 1), px + 9 * f, py - 25.5 * f);
     const br = bridgeAt(st.v.bridges.filter(q => q.hp > 0), tg);
-    let cap = null; if (!br && mem.some(u => u.t === 'eng')) { let bd = DEFS.capRange; for (const q of st.v.neut) { const d = Math.hypot(q.x + 0.5 - tg[0], q.y + 0.5 - tg[1]); if (d <= bd && !st.scene.mine(q.o)) { bd = d; cap = q; } } }
-    const txt = n + (n === 1 ? ' enhed' : ' enheder') + (br ? (st.v.peaceLeft > 0 ? ' · mod broen' : ' · sprænger broen') : cap ? ' · overtager ' + ND[cap.t].name.toLowerCase() : st.v.peaceLeft > 0 ? ' · spejder' : '');
+    let cap = null; if (!br && !o.camp && mem.some(u => u.t === 'eng')) { let bd = DEFS.capRange; for (const q of st.v.neut) { const d = Math.hypot(q.x + 0.5 - tg[0], q.y + 0.5 - tg[1]); if (d <= bd && !st.scene.mine(q.o)) { bd = d; cap = q; } } }
+    const camp = o.camp ? st.v.players.find(q => q.id === o.camp) : null, cnt = n + (n === 1 ? ' enhed' : ' enheder');
+    const txt = camp ? (n || !o.nuke ? cnt + ' mod ' + gen(camp.name) + ' lejr' + (o.nuke ? ' · ☢ A-bombe' : '') : '☢ A-bombe mod ' + gen(camp.name) + ' lejr')
+      : cnt + (br ? (st.v.peaceLeft > 0 ? ' · mod broen' : ' · sprænger broen') : cap ? ' · overtager ' + ND[cap.t].name.toLowerCase() : st.v.peaceLeft > 0 ? ' · spejder' : '');
     g.font = `700 ${12 * dpr}px system-ui, sans-serif`; const w = g.measureText(txt).width + 14 * dpr, h = 19 * dpr, bx = px - w / 2, by = py + 7 * dpr;
     g.beginPath(); g.roundRect(bx, by, w, h, h / 2); g.fillStyle = 'rgba(16,21,27,.92)'; g.fill(); g.lineWidth = 2 * dpr; g.strokeStyle = on ? c : OUT; g.stroke();
     g.fillStyle = '#fff'; g.fillText(txt, px, by + h / 2 + dpr * 0.5);
   });
+  // whose camp is whose: a small banner over every enemy camp that has been found
+  for (const q of st.scene.camps || []) {
+    const col = DEFS.colors[q.color].main, px = X(q.x), py = Y(q.y - 2.15), h = 19 * dpr;
+    g.font = `700 ${12 * dpr}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const w = g.measureText(q.name).width + 28 * dpr;
+    g.beginPath(); g.roundRect(px - w / 2, py - h / 2, w, h, h / 2); g.fillStyle = 'rgba(16,21,27,.9)'; g.fill(); g.lineWidth = 2 * dpr; g.strokeStyle = q.on ? '#ffd23e' : col; g.stroke();
+    g.fillStyle = col; g.beginPath(); g.arc(px - w / 2 + 10 * dpr, py, 4.5 * dpr, 0, 7); g.fill();
+    g.fillStyle = '#fff'; g.fillText(q.name, px + 6 * dpr, py + dpr * 0.5);
+  }
   if (st.box) { const q = st.box, x = Math.min(q.x0, q.x1) * dpr, y = Math.min(q.y0, q.y1) * dpr, w = Math.abs(q.x1 - q.x0) * dpr, h = Math.abs(q.y1 - q.y0) * dpr; g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(x, y, w, h); g.lineWidth = 3.5 * dpr; g.strokeStyle = OUT; g.strokeRect(x, y, w, h); g.lineWidth = 1.5 * dpr; g.strokeStyle = '#fff'; g.strokeRect(x, y, w, h); }
   const ring = (cx, cy, r) => { g.setLineDash([8 * dpr, 7 * dpr]); g.lineWidth = 2.5 * dpr; g.strokeStyle = 'rgba(255,255,255,.85)'; g.beginPath(); g.arc(X(cx), Y(cy), r * Z, 0, 7); g.stroke(); g.setLineDash([]); };
   // selected building
@@ -771,6 +873,7 @@ function click(e) {
   }
   if (ed.mode === 'idle' && m.alive && st.v.phase === 'play') {
     const f = flagAt(px, py);
+    if (f >= 0 && st.orders[f].camp) return openCamp(st.orders[f].camp);
     if (f >= 0) { const mem = st.scene.units.filter(u => u.pick && u.g === f); st.selU = new Set(mem.map(u => u.key)); if (mem.length) unitSay(leadType(mem), 's'); st.sel = null; $('#orders').hidden = true; sfx('click'); rebuild(); renderSide(); return; }
     const u = unitAt(wx, wy); if (u) return selectUnit(u, e);
     if (st.selU.size) { st.selU.clear(); if (!b) { rebuild(); renderSide(); return; } }   // a click elsewhere only deselects
@@ -781,11 +884,22 @@ function click(e) {
   else if (st.sel != null || st.selBr != null) { st.sel = null; st.selBr = null; rebuild(); }
 }
 // radar: click or drag to move the view
-const rad = $('#radar'); let radDown = false;
+const rad = $('#radar'); let radDown = null;
 const radGo = e => { const r = rad.getBoundingClientRect(), n = st.v ? st.v.map.n : 0; if (!n) return; R.cam.x = (e.clientX - r.left) / r.width * n; R.cam.y = (e.clientY - r.top) / r.height * n; };
-rad.addEventListener('pointerdown', e => { radDown = true; rad.setPointerCapture(e.pointerId); radGo(e); });
-rad.addEventListener('pointermove', e => { if (radDown) radGo(e); });
-rad.addEventListener('pointerup', () => radDown = false); rad.addEventListener('pointercancel', () => radDown = false);
+function radCamp(e) {      // the camp marker under the pointer
+  if (st.mode !== 'plan' || !st.scene || !st.scene.radarOn || !st.scene.camps || !st.scene.camps.length) return null;
+  const r = rad.getBoundingClientRect(), n = st.v.map.n, x = (e.clientX - r.left) / r.width * n, y = (e.clientY - r.top) / r.height * n;
+  let best = null, bd = (e.pointerType === 'mouse' ? 9 : 17) / r.width * n;
+  for (const c of st.scene.camps) { const d = Math.hypot(c.x - x, c.y - y); if (d < bd) { bd = d; best = c; } }
+  return best;
+}
+rad.addEventListener('pointerdown', e => { unlock(); radDown = { x: e.clientX, y: e.clientY, camp: radCamp(e) }; rad.setPointerCapture(e.pointerId); if (!radDown.camp) radGo(e); });
+rad.addEventListener('pointermove', e => {
+  if (radDown) { if (radDown.camp && Math.abs(e.clientX - radDown.x) + Math.abs(e.clientY - radDown.y) > 7) radDown.camp = null; if (!radDown.camp) radGo(e); }
+  else if (e.pointerType === 'mouse') { const c = radCamp(e); rad.style.cursor = c ? 'pointer' : ''; rad.title = c ? gen(c.name) + ' lejr: klik for at spionere eller angribe' : ''; }
+});
+rad.addEventListener('pointerup', () => { const c = radDown && radDown.camp; radDown = null; if (c) openCamp(c.id); });
+rad.addEventListener('pointercancel', () => radDown = null);
 const keys = new Set();
 addEventListener('keydown', e => {
   if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
@@ -808,7 +922,7 @@ $('#btnReady').onclick = async () => {
     const i = st.orders.findIndex(o => Object.keys(o.units).length && !o.pts.length); if (i >= 0) toast('Gruppe ' + (i + 1) + ' har intet mål og bliver hjemme.');
   }
   cancelEdit(); $('#orders').hidden = true; st.editG = -1; st.sel = null; st.selU.clear(); $('#info').hidden = true; sfx('click');
-  st.busy = true; await doAct({ a: 'ready', on: !m.ready }); st.busy = false;
+  st.busy = true; if (!m.ready && pruneOrders()) await doAct({ a: 'orders', orders: st.orders }, true); await doAct({ a: 'ready', on: !m.ready }); st.busy = false;
 };
 
 // ---------- battle playback ----------
@@ -821,7 +935,7 @@ async function startBattle() {
   const sim = createSim(snap), myIdx = v.me ? snap.players.findIndex(p => p.id === v.me.id) : -1, ti = myIdx >= 0 ? sim.P[myIdx].ti : -1;
   const rep = v.me && v.me.report && v.me.report.round === snap.round ? v.me.report : null;
   st.rp = { sim, snap, myIdx, ti, colors: snap.players.map(p => ({ color: p.color, faction: p.faction })), speed: cfg.replaySpeed === 'auto' ? 'auto' : +cfg.replaySpeed, acc: 0, paused: false, lastCombat: -999, cash: 0, done: false,
-    known: new Set(st.knownPrev), money0: v.me ? v.me.money - (rep ? rep.income + rep.supply + (rep.aid || 0) + (rep.depot || 0) : 0) : 0, hold: 1.0, own: sim.Ns.map(q => q.o) };
+    known: new Set(st.knownPrev), money0: v.me ? v.me.money - (rep ? rep.income + rep.supply + (rep.aid || 0) + (rep.depot || 0) : 0) : 0, hold: 1.0, own: sim.Ns.map(q => q.o), aims: [], slowUntil: 0, jump: null };
   R.clear(); $('#alerts').innerHTML = '';
   const mine = myIdx >= 0 && snap.players[myIdx].buildings.find(b => b.t === 'hq'); if (mine) { R.cam.x = mine.x + 1.5; R.cam.y = mine.y + 2.5; }
   $('#replaybar').hidden = false; renderReplayBar(); renderTop(); $('#side').classList.add('off');
@@ -860,6 +974,24 @@ function handleEvents(rp, fxOn) {
       if (mine(e.o)) addAlert(ND[e.t].name + ' overtaget', e.x, e.y, '⚑'); else if (mine(was)) { addAlert(ND[e.t].name + ' er taget af fjenden', e.x, e.y); if (fxOn) sfx('alert'); }
     } else if (e.k === 'brd') { if (fxOn) { R.event(e); if (onScreen(e.x, e.y)) sfx('bigboom', 0.9); } addAlert('En bro er sprængt', e.x, e.y); }
     else if (e.k === 'hl') { if (fxOn && see(e.x, e.y)) R.event(e); }
+    else if (e.k === 'mn') {      // a minefield went off: its owner's side and whoever stood in it see that
+      const ours = rp.ti >= 0 && sim.P[e.o].ti === rp.ti;
+      if (see(e.x, e.y) || ours) { rp.lastCombat = sim.tick; rp.spot = [e.x, e.y]; if (fxOn) { R.event(e); if (onScreen(e.x, e.y)) sfx('boom'); } }
+      if (e.o === rp.myIdx) addAlert('Et minefelt sprang', e.x, e.y, '✹');
+    } else if (e.k === 'nl') {    // an A-bomb has left its silo: everybody hears it, the two sides involved see where it will land
+      const NK = DEFS.nuke, t1 = sim.tick + Math.round((NK.hit - NK.launch) / DEFS.tick), by = rp.snap.players[e.o], at = rp.snap.players[e.to];
+      const ours = rp.ti < 0 || sim.P[e.o].ti === rp.ti, onUs = rp.ti >= 0 && sim.P[e.to].ti === rp.ti;
+      rp.slowUntil = t1 + 50; rp.spot = [e.tx, e.ty];
+      rp.aims.push({ x: e.tx, y: e.ty, r: NK.r, t0: sim.tick, t1, show: ours || onUs });
+      if (fxOn && (ours || see(e.x, e.y))) { R.event(e); if (onScreen(e.x, e.y)) sfx('rocket', 1); }
+      if (fxOn) { sfx('siren'); say(onUs ? 'nukein' : 'nukeout'); splash('☢ A-BOMBE', by.name + ' har affyret mod ' + at.name, 1900); }
+      if (e.o === rp.myIdx) rp.jump = { tick: sim.tick + 13, x: e.tx, y: e.ty };
+      else if (onUs) addAlert('A-bombe på vej mod ' + (e.to === rp.myIdx ? 'din lejr' : gen(at.name) + ' lejr'), e.tx, e.ty, '☢');
+    } else if (e.k === 'nk') {
+      rp.aims = rp.aims.filter(a => a.x !== e.x || a.y !== e.y); rp.lastCombat = sim.tick; rp.spot = [e.x, e.y];
+      if (fxOn) { R.event(e); const near = onScreen(e.x, e.y); if (near && see(e.x, e.y)) R.flash(); sfx('nuke', near ? 1 : 0.55); }
+      addAlert('A-bombe over ' + gen(rp.snap.players[e.to].name) + ' lejr', e.x, e.y, '☢');
+    }
   }
 }
 function addAlert(txt, x, y, icon = '⚠') {
@@ -870,10 +1002,11 @@ function addAlert(txt, x, y, icon = '⚠') {
 function stepReplay(dt) {
   const rp = st.rp; if (!rp || rp.paused || rp.done) return;
   if (rp.hold > 0) { rp.hold -= dt; return; }
-  const sim = rp.sim, speed = rp.speed === 'auto' ? (sim.tick - rp.lastCombat < 45 ? 1.4 : 14) : rp.speed;
+  const sim = rp.sim, speed = rp.speed === 'auto' ? (sim.tick - rp.lastCombat < 45 || sim.tick < rp.slowUntil ? 1.4 : 14) : rp.speed;      // slow while there is fighting, or a bomb in the air
   rp.acc += dt * speed; let steps = 0; const max = speed > 100 ? 400 : 80;
   while (rp.acc >= DEFS.tick && !sim.done && steps < max) { sim.step(); rp.acc -= DEFS.tick; steps++; handleEvents(rp, speed <= 14 && steps <= 8); }
   if (steps >= max) rp.acc = 0;
+  if (rp.jump && sim.tick >= rp.jump.tick) { R.cam.x = rp.jump.x; R.cam.y = rp.jump.y; rp.jump = null; }      // my own bomb: follow it to where it lands
   const f = $('#rpFill'); if (f) { f.style.width = (sim.time / sim.duration * 100) + '%'; const left = Math.max(0, sim.duration - sim.time); $('#rpTime').textContent = Math.floor(left / 60) + ':' + String(Math.floor(left % 60)).padStart(2, '0'); }
   if (sim.done) { rp.done = true; LS.set(seenKey(), String(rp.snap.round)); setTimeout(showSummary, 700); }
 }
@@ -882,7 +1015,9 @@ function replayScene() {
   const B = ti < 0 ? sim.Bs : sim.Bs.filter(b => sim.P[b.o].ti === ti || seen.has(b.id) || rp.known.has(b.id));
   const radar = ti < 0 || sim.Bs.some(b => b.o === rp.myIdx && b.t === 'rad' && !b.dead && !b.off);
   const NB = sim.Ns.map(q => ({ id: q.id, t: q.t, x: q.x, y: q.y, hp: 1, mhp: 1, o: q.o, neutral: true }));
-  st.scene = { buildings: NB.length ? [...B, ...NB] : B, units: sim.Us, ore: sim.ore, bridges: sim.Brs, fog: ti >= 0 ? { explored: sim.explored[ti], vis: sim.vis[ti], key: 'r' + ((sim.tick / 5) | 0) } : null, colors: rp.colors,
+  for (const q of sim.Ms) if (!q.dead && (ti < 0 || sim.P[q.o].ti === ti)) NB.push({ id: q.id, t: 'mine', x: q.x, y: q.y, hp: 1, mhp: 1, o: q.o });      // minefields: only their owner's side sees them
+  const aims = rp.aims.length ? rp.aims.filter(a => a.show).map(a => ({ x: a.x, y: a.y, r: a.r, a: Math.min(1, (sim.tick - a.t0) / (a.t1 - a.t0)) })) : null;
+  st.scene = { aims, buildings: NB.length ? [...B, ...NB] : B, units: sim.Us, ore: sim.ore, bridges: sim.Brs, fog: ti >= 0 ? { explored: sim.explored[ti], vis: sim.vis[ti], key: 'r' + ((sim.tick / 5) | 0) } : null, colors: rp.colors,
     mine: o => ti < 0 || sim.P[o].ti === ti, tick: sim.tick, radarOn: radar };
 }
 function endReplay() { st.rp = null; $('#replaybar').hidden = true; $('#alerts').innerHTML = ''; R.clear(); st.mode = 'plan'; rebuild(); }
@@ -895,12 +1030,15 @@ function showSummary() {
   modal(`<h2>Runde ${rp.snap.round}: rapport</h2>
     ${r ? `<div class="stats"><div class="stat"><small>Malm høstet</small><b class="g">+${fmt(r.income)}</b></div><div class="stat"><small>Forsyning${r.depot ? ' + depoter' : ''}${r.aid ? ' + støtte' : ''}</small><b class="g">+${fmt(r.supply + (r.aid || 0) + (r.depot || 0))}</b></div><div class="stat"><small>Nedkæmpet for</small><b class="k">${fmt(r.killed)}</b></div>
       <div class="stat"><small>Bygninger mistet</small><b class="${r.bLost ? 'r' : ''}">${r.bLost}</b></div><div class="stat"><small>Bygninger ødelagt</small><b class="${r.bKilled ? 'k' : ''}">${r.bKilled}</b></div><div class="stat"><small>Tab i enheder</small><b class="${r.lostValue ? 'r' : ''}">${fmt(r.lostValue)}</b></div></div>
-      ${lost ? `<p>Faldne: ${lost}.</p>` : '<p>Ingen enheder gik tabt.</p>'}${r.aid ? `<p>Du har fået ${fmt(r.aid)} i genopbygningsstøtte.</p>` : ''}${r.depot ? `<p>Dine forsyningsdepoter har givet ${fmt(r.depot)}.</p>` : ''}` : '<p>Du deltog ikke i denne runde.</p>'}
+      ${lost ? `<p>Faldne: ${lost}.</p>` : '<p>Ingen enheder gik tabt.</p>'}${r.nuked ? `<p><b style="color:var(--gold)">☢ Din A-bombe ramte ${esc(gen((v.players.find(q => q.id === r.nuked) || { name: 'fjenden' }).name))} lejr.</b> Den næste er klar i runde ${m.nukeAt}.</p>` : ''}${r.aid ? `<p>Du har fået ${fmt(r.aid)} i genopbygningsstøtte.</p>` : ''}${r.depot ? `<p>Dine forsyningsdepoter har givet ${fmt(r.depot)}.</p>` : ''}` : '<p>Du deltog ikke i denne runde.</p>'}
     ${out.length ? `<p><b style="color:var(--bad)">Slået ud:</b> ${out.map(esc).join(', ')}</p>` : ''}
     ${m && !m.alive ? '<p><b style="color:var(--bad)">Din sidste bygning er faldet. Du er ude af kampen.</b></p>' : ''}
     <div class="acts"><button class="btn" id="smAgain">Se kampen igen</button><button class="btn go" id="smOk">Videre til runde ${v.round}</button></div>`);
   if (m && !m.alive) say('eliminated'); else if (out.length) say('out');
-  $('#smOk').onclick = () => { closeModal(); endReplay(); say('newround'); };
+  $('#smOk').onclick = () => {
+    closeModal(); endReplay();
+    if (m && m.alive && m.nukeAt === v.round && nukeState(m, v.round, st.ps).ready) { say('nukeready'); toast('☢ A-bomben er klar. Sæt den på et angreb under Angreb.'); } else say('newround');
+  };
   $('#smAgain').onclick = () => { closeModal(); st.rp = null; startBattle(); };
 }
 function standings() {
@@ -922,7 +1060,11 @@ function showHelp() {
     <ul><li><b>Byg:</b> klik på et billede i sidebaren, vent til det er klar, og placér bygningen tæt på dine andre. Start med kraftværk, raffinaderi og kaserne.</li>
     <li><b>Malm er penge:</b> høsterne kører selv malm hjem, mens runden afvikles. Flere raffinaderier og høstere giver flere penge.</li>
     <li><b>Strøm:</b> den lodrette bjælke viser strømmen. Mangler der strøm, slukker de nyeste bygninger.</li>
-    <li><b>Angreb:</b> markér enheder (træk en boks med venstre museknap, eller klik på dem; på mobil vælger et tryk alle af samme slags), tryk <b>Send af sted</b>, og udpeg målet på kortet. Et flag med gruppens nummer viser, hvor de skal hen, når runden afvikles. Tryk på flaget for at vælge gruppen igen. Du kan sende folk ind i det sorte for at udforske.</li>
+    <li><b>Radar og spionage:</b> byg en radarstation. Under <b>Angreb</b> står fjendens generaler: <b>Spionér</b> finder en lejr og viser dens bygninger og hær, som de er lige nu (minefelter ses ikke). En fundet lejr får et mærke på radaren.</li>
+    <li><b>Angreb på en lejr:</b> klik på lejrens mærke på radaren, eller tryk <b>Angrib</b> på listen, og vælg, hvor mange af hver slags der skal af sted. Højst tre angreb pr. runde. Alle andre bliver hjemme og forsvarer hele basen.</li>
+    <li><b>Mål på kortet:</b> du kan også markere enheder (træk en boks med venstre museknap, eller klik på dem; på mobil vælger et tryk alle af samme slags), trykke <b>Send af sted</b> og udpege et sted på kortet: til broer, neutrale bygninger og spejderture ind i det sorte. Et flag viser, hvor gruppen skal hen.</li>
+    <li><b>Miner og mure:</b> betonmure spærrer vejen, og minefelter er usynlige for fjenden og springer under den første, der kører eller går ind i dem. Begge lægges fra byggemenuen, når du har en kaserne.</li>
+    <li><b>A-bomben:</b> en raketsilo (kræver teknologicenter) gør en bombe klar på fem runder. Sæt den på et angreb mod en lejr: den rammer den tætteste klynge af bygninger, lige når slaget begynder. Alle kan se ☢ og antal runder ud for din general, så regn med besøg.</li>
     <li><b>Fly:</b> en flyveplads har plads til fire fly. De flyver over alt, og kun luftværn, raketsoldater og maskingeværer kan ramme dem.</li>
     <li><b>Klar til kamp:</b> når alle er klar, afvikles runden. Hærene kører hen over kortet og kæmper selv, og du ser det hele bagefter.</li>
     <li>Enheder, der ikke er i en gruppe, bliver hjemme og forsvarer basen. Overlevende vender hjem efter hver runde.</li>

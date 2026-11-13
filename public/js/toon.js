@@ -819,6 +819,47 @@ M.wall = (k, c) => {
   k.box(0, 0, 0.4, 0.7, 0.7, 0.05, shade(c.conc, -0.14), { ol: 0.4 });
 };
 
+// A minefield as its owner sees it: three plates half buried in turned earth, and a marker stake with a pennant.
+M.mine = (k, c) => {
+  k.fr(k.ngon(0, 0.02, 0.46, 9, 0.3), 0, k.ngon(0, 0.02, 0.4, 9, 0.3), 0.025, c.sand, { ol: 0.5, sh: false, bias: -5, mat: null });
+  for (const [x, y, r] of [[-0.2, -0.14, 0.13], [0.19, -0.02, 0.135], [-0.06, 0.24, 0.125]]) {
+    k.cyl(x, y, r, 0.02, 0.05, c.gun, { n: 10, ol: 0.6, mat: null });
+    k.cyl(x, y, r * 0.45, 0.07, 0.03, c.red, { n: 8, ol: 0.35, sh: false, mat: null });
+    if (k.hi) for (let i = 0; i < 3; i++) { const a = i * 2.094 + x * 9; k.box(x + Math.cos(a) * r * 0.78, y + Math.sin(a) * r * 0.78, 0.07, 0.025, 0.025, 0.02, c.metal, { ol: 0, sh: false, mat: null }); }
+  }
+  k.rod([0.33, -0.3, 0], [0.33, -0.3, 0.42], 0.03, 0.03, c.wood, { ol: 0.4, mat: null });
+  k.box(0.43, -0.3, 0.27, 0.2, 0.025, 0.13, c.T, { ol: 0.5, sh: false });
+};
+// The rocket silo: a round shaft in a concrete collar with the hatch slid open and the nose of the rocket just showing,
+// a blast wall behind it and a control hut with a mast in the corner.
+M.silo = (k, c) => {
+  const hi = k.hi, sx = -0.2, sy = 0.14;
+  slab(k, c, oct(1.9, 1.9, 0.42));
+  k.cyl(sx, sy, 0.66, 0.07, 0.2, c.bunker, { n: 12 });
+  k.cyl(sx, sy, 0.69, 0.11, 0.07, c.gold, { n: 12, ol: 0.35, sh: false, mat: 'hazard' });
+  k.cyl(sx, sy, 0.47, 0.27, 0.012, c.coal, { n: 12, ol: 0.5, sh: false, mat: null });
+  k.cyl(sx, sy, 0.17, 0.24, 0.24, c.white, { n: 10, ol: 0.6, mat: null });                    // the rocket: white, with a red tip
+  k.cyl(sx, sy, 0.175, 0.36, 0.045, c.coal, { n: 10, ol: 0.3, sh: false, mat: null });
+  k.stack(sx, sy, [[0.17, 0.48], [0.1, 0.63]], c.white, { n: 10, ol: 0.6, mat: null });
+  k.stack(sx, sy, [[0.1, 0.63], [0.012, 0.76]], c.red, { n: 10, ol: 0.6, mat: null });
+  for (const s of [-1, 1]) {      // the two halves of the hatch, slid aside on their rails
+    k.box(sx + s * 0.66, sy, 0.27, 0.36, 0.86, 0.07, c.T, { ol: 0.7 });
+    if (hi) k.box(sx + s * 0.66, sy, 0.34, 0.3, 0.8, 0.012, c.Td, { ol: 0, sh: false });
+  }
+  k.box(sx, sy - 0.74, 0.07, 1.1, 0.12, 0.5, c.conc, { ol: 0.8 });                 // blast wall
+  k.box(0.66, -0.62, 0.07, 0.46, 0.44, 0.36, c.wall);                            // control hut
+  k.box(0.66, -0.62, 0.43, 0.54, 0.52, 0.05, c.roof, { ol: 0.5 });
+  win(k, c, 0.66, -0.395, 0.2, 0.24, 0.14);
+  mast(k, c, 0.82, -0.78, 0.48, 0.52, c.red);
+  if (!hi) return;
+  k.box(sx, sy - 0.74, 0.57, 1.14, 0.16, 0.03, shade(c.conc, -0.14), { ol: 0.4 });
+  sign(k, c, 0.66, 0.84, 0.03, 0.4, 0.1, c.gold, 'hazard');
+  k.tube([0.42, -0.5, 0.16], [0.14, -0.2, 0.16], 0.035, c.metal, { ol: 0.45, n: 6 });      // fuel line from the hut to the shaft
+  for (const [x, y] of [[0.72, 0.3], [0.86, 0.46]]) drum(k, c, x, y, 0.07, c.rust);
+  lamp(k, c, -0.86, 0.78, 0.07, 0.5);
+  dish(k, c, 0.52, -0.72, 0.48, 0.1);
+};
+
 M.pill = (k, c) => {
   k.cyl(0, 0, 0.44, 0, 0.32, c.bunker, { n: 8 });
   k.cyl(0, 0, 0.46, 0.12, 0.08, c.T, { n: 8, ol: 0.4, sh: false });

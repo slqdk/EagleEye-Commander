@@ -50,6 +50,8 @@ Status after the third session (v2.4.0 on branch `v2.4`, 11 Nov 2026; `main` is 
   - The AI now and then pays to rebuild a fallen bridge (it still never brings one down).
   - **2.3.3** (also merged into 2.4): a request for a path beginning with `//` made `new URL` throw and stopped the server. The path is now read from the request line, and a failing request is answered with an error instead of ending the process.
 
+- **v2.4.1** The installer, and one fix in the client. `pct exec <id> -- eagleeye-update` failed on Søren's host with "Failed to exec": `pct exec` does not search `/usr/local/bin`. The command is now also linked into `/usr/bin`, the installer sets its own `PATH` and a locale that exists (`C.UTF-8`, no more perl warnings). The way that always works: `pct exec <id> -- bash /opt/eagleeye-commander/deploy/install.sh`. The client fix: opening an online match from the front page (or reloading the page) when a round had been resolved since the last visit threw an error in `renderSide()` (`st.ps` was still empty), so the battle never played and the view hung; reloading did not help. `applyView()` now works out the power state before the first playback. Present since 2.3.
+
 ## What was decided
 
 - Rebuild from scratch instead of extending v66. v66 was "own base + separate raids"; the 90s feel needs one shared battlefield.

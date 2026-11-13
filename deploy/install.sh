@@ -6,7 +6,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/slqdk/EagleEye-Commander/main/deploy/install.sh | bash
 #
 # Running it again updates the code and keeps the matches. After the first run the same thing is the command
-#   eagleeye-update
+#   eagleeye-update                          (inside the container)
+#   pct exec <number> -- eagleeye-update     (from the Proxmox host)
 #
 # Optional settings, given in front of "bash":  PORT=8080  APP_DIR=/opt/eagleeye-commander
 #   DATA_DIR=/var/lib/eagleeye-commander  BRANCH=main  REPO=https://github.com/slqdk/EagleEye-Commander.git
@@ -71,6 +72,8 @@ configure() {
 REPO='$REPO' BRANCH='$BRANCH' APP_DIR='$APP_DIR' DATA_DIR='$DATA_DIR' PORT='$PORT' exec bash '$APP_DIR/deploy/install.sh' "\$@"
 EOF
   chmod 755 /usr/local/bin/eagleeye-update
+  # "pct exec" on a Proxmox host does not look in /usr/local/bin, so the command is also reachable from /usr/bin
+  ln -sf /usr/local/bin/eagleeye-update /usr/bin/eagleeye-update 2>/dev/null || true
 
   if [ ! -d /run/systemd/system ]; then
     say "EagleEye Commander $version er hentet, men systemd kører ikke her, så der er ikke lavet en tjeneste."
@@ -100,7 +103,7 @@ EOF
   cat <<EOF
    Adresse:              http://${ip:-<containerens IP>}:$PORT
    Kampe og loginnøgle:  $DATA_DIR   (tag backup af den mappe, eller af hele containeren)
-   Opdatér senere:       eagleeye-update
+   Opdatér senere:       eagleeye-update      (fra Proxmox-værten: pct exec <nummer> -- eagleeye-update)
    Log:                  journalctl -u $SVC -f
 
    Nginx Proxy Manager:  Scheme http · Forward Hostname/IP ${ip:-<containerens IP>} · Forward Port $PORT
@@ -110,6 +113,10 @@ EOF
 
 main() {
   [ "$(id -u)" = 0 ] || die "Kør som root."
+  # "pct exec" hands over the host's environment, or hardly any: make sure the usual folders are searched,
+  # and use a language that every Debian has (a missing one makes apt and perl complain on every line)
+  export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+  export LC_ALL=C.UTF-8 LANG=C.UTF-8
   REPO=${REPO:-https://github.com/slqdk/EagleEye-Commander.git}
   BRANCH=${BRANCH:-main}
   APP_DIR=${APP_DIR:-/opt/eagleeye-commander}
